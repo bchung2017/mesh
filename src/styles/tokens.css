@@ -1,0 +1,8 @@
+:root {
+  --navy:#1b2a4a; --sky:#5aa9e6; --sky-soft:#e3f1fc;
+  --white:#ffffff; --bg:#f7f5f2;
+  --coral:#ff6f61; --salmon:#ffa08c; --salmon-soft:#ffe3dc;
+  --ink:#1b2a4a; --ink-dim:#5a6a8a; --ink-faint:#9aa6bd;
+  --ok:#2ea886; --warn:#e8a13c;
+  --sans:"Helvetica Neue",Helvetica,Arial,sans-serif;
+}

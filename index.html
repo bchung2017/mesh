@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mesh — home</title>
+</head>
+<body>
+<div class="wrap">
+
+  <div>
+    <h1>mesh<span class="dot">.</span></h1>
+    <div class="sub" id="subline">Sunday, July 20 — 4 communities, 2 humming</div>
+  </div>
+
+  <div class="tabs" role="tablist">
+    <button class="tab on" id="tab-btn-field" role="tab" aria-selected="true">the field</button>
+    <button class="tab" id="tab-btn-blobs" role="tab" aria-selected="false">blobs</button>
+    <button class="tab" id="tab-btn-cal" role="tab" aria-selected="false">calendar</button>
+  </div>
+
+  <div class="view on" id="tab-field">
+
+  <!-- BUBBLE FIELD -->
+  <div class="card field-card">
+    <canvas id="field"></canvas>
+    <div class="field-hint">blob size = involvement · drag them around</div>
+  </div>
+
+  <!-- NUDGES (separate view, off the main screen) -->
+  <div class="card" id="nudges-view" style="display:none">
+    <div class="card-head">
+      <span class="label">Nudges — where warmth is fading</span>
+      <span class="label">3</span>
+    </div>
+    <div class="nudge">
+      <span class="where">MM</span>
+      <span class="what">Micromobility has gone quiet for a month — show up or bring an artifact</span>
+      <span class="act"><a href="#">plan →</a></span>
+    </div>
+    <div class="nudge">
+      <span class="where">HW</span>
+      <span class="what">A warm thread from the hardware meetup is 6 weeks old</span>
+      <span class="act"><a href="#">nudge →</a></span>
+    </div>
+    <div class="nudge">
+      <span class="where">CL</span>
+      <span class="what">You owe a follow-up from last week's intro</span>
+      <span class="act"><a href="#">nudge →</a></span>
+    </div>
+  </div>
+
+  <div class="statusline">
+    <span>4 communities</span>
+    <span><a href="#" id="nudges-toggle" style="color:inherit;text-decoration:none">nudges →</a> · monthly review in 11 days</span>
+  </div>
+  </div><!-- /tab-field -->
+
+  <div class="view" id="tab-blobs">
+    <div class="card">
+      <div class="card-head">
+        <span class="label">every blob</span>
+        <span class="label" id="blob-count"></span>
+      </div>
+      <div id="blob-list"></div>
+    </div>
+  </div>
+
+  <div class="blob-modal" id="blob-modal" role="dialog" aria-label="blob details">
+    <div class="sheet" id="blob-sheet"></div>
+  </div>
+
+  <div class="view" id="tab-cal">
+<section class="card" id="calCard">
+    <div class="month-head">
+      <div class="month-name" id="monthName"></div>
+      <div class="month-nav">
+        <button class="today-link" id="todayBtn">today</button>
+        <button class="nav-btn" id="prevBtn" aria-label="previous month">&#8249;</button>
+        <button class="nav-btn" id="nextBtn" aria-label="next month">&#8250;</button>
+      </div>
+    </div>
+    <div class="dow" id="dowRow">
+      <span>mon</span><span>tue</span><span>wed</span><span>thu</span><span>fri</span><span>sat</span><span>sun</span>
+    </div>
+    <div class="grid" id="grid"></div>
+
+    <div class="day-modal" id="dayModal" role="dialog" aria-label="day details">
+      <div class="panel-head">
+        <div class="panel-date" id="panelDate"></div>
+        <div class="panel-side">
+          <span class="label" id="panelCount"></span>
+          <button class="close-x" id="closeBtn" aria-label="close">&#215;</button>
+        </div>
+      </div>
+      <div class="events" id="eventList"></div>
+      <div class="add-row">
+        <input type="text" id="evName" placeholder="what's happening" maxlength="60">
+        <input type="time" id="evTime" value="18:00">
+        <button class="btn" id="addBtn">add</button>
+      </div>
+      <div class="tone-toggle">
+        <span class="label">tone</span>
+        <button class="tone-chip warm on" data-tone="warm">gathering</button>
+        <button class="tone-chip cool" data-tone="cool">logistics</button>
+      </div>
+    </div>
+  </section>
+
+    </div><!-- /tab-cal -->
+
+</div>
+
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>
