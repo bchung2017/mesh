@@ -1,3 +1,7 @@
+/* ---- list loading / error note ---- */
+.list-note{padding:18px 4px;color:var(--ink-faint);font-size:13px}
+.list-note.error{color:var(--coral)}
+
 /* ---- blobs list ---- */
 .blob-row{
   display:flex;align-items:center;gap:16px;padding:14px 4px;
