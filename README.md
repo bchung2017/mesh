@@ -105,6 +105,29 @@ cd backend && python wsgi.py   # Flask serves dist/ AND the API on one port
 
 Or point a WSGI server at it: `gunicorn wsgi:app` (from `backend/`).
 
+## Deploy (Render Blueprint)
+
+The repo ships a `render.yaml` Blueprint and a multi-stage `Dockerfile` (Node
+build stage → Python runtime; Flask serves `dist/` + the API on one port).
+
+1. Push to GitHub.
+2. In Render: **New → Blueprint**, point it at this repo. It reads `render.yaml`
+   and creates one Docker web service.
+3. Set the secret **`DATABASE_URL`** in the service's Environment tab — the
+   Supabase **Session pooler** URL (`:5432`). `DB_SCHEMA` defaults to `mesh`.
+   Leave `DATABASE_URL` unset to run on ephemeral SQLite (data resets on deploy).
+4. Deploy. Health check is `/api/health` (reports the active backend + schema).
+
+Build the image locally the same way Render does:
+
+```bash
+docker build -t mesh .
+docker run -p 5000:5000 -e DATABASE_URL=... -e DB_SCHEMA=mesh mesh
+```
+
+`WEB_CONCURRENCY` is 1 by default so first-boot seeding can't race across
+workers; raise it once seeding is gated for your deployment.
+
 ## API
 
 Base path `/api`. All community/event fields use the same camelCase keys as the
