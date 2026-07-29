@@ -12,17 +12,19 @@ import { initTabs } from './views/tabs';
 import { initBlobs } from './views/blobs';
 import { initNudges } from './views/nudges';
 
-// Fetch community data from the API, then boot the views. Order mirrors the
-// original prototype: field and calendar first, then the tab bar resets the
-// subline to the home copy, then blobs wires the field → sheet bridge.
-async function boot(): Promise<void> {
-  const communities = await getCommunities();
+// Boot every view immediately so the whole UI is interactive up front — tabs,
+// calendar, nudges, and the (empty) field all work without waiting on the API.
+// Then load community data progressively and hand it to the field + blobs when
+// it arrives. A slow or failing API can no longer blank the interface.
+const field = initField(byId<HTMLCanvasElement>('field'));
+initCalendar();
+const { show } = initTabs();
+const blobs = initBlobs(show);
+initNudges();
 
-  initField(byId<HTMLCanvasElement>('field'), communities);
-  void initCalendar();
-  const { show } = initTabs();
-  initBlobs(show, communities);
-  initNudges();
-}
-
-boot().catch((err) => console.error('mesh: failed to start', err));
+getCommunities()
+  .then((communities) => {
+    field.setCommunities(communities);
+    blobs.setCommunities(communities);
+  })
+  .catch((err) => console.error('mesh: could not load communities', err));

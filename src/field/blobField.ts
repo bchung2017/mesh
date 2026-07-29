@@ -22,18 +22,26 @@ interface FieldBlob {
   tex: WebGLTexture | HTMLCanvasElement;
 }
 
+/** Controls a running field: feed it community data whenever it arrives. */
+export interface FieldHandle {
+  setCommunities(source: Community[]): void;
+}
+
 /**
  * Boot the WebGL (with 2D fallback) soft-body blob field on the given canvas.
  * Each blob is a community, sized by involvement; drag them around, and a clean
  * tap dispatches a `blobclick` CustomEvent on the canvas.
+ *
+ * The animation loop starts immediately with no blobs; call the returned
+ * `setCommunities` once data loads. That keeps the field (and the rest of the
+ * UI) interactive even if the API is slow or down.
  */
-export function initField(canvas: HTMLCanvasElement, source: Community[]): void {
+export function initField(canvas: HTMLCanvasElement): FieldHandle {
   let W: number, H: number, DPR: number;
 
-  // the field's view of a community — only what the renderer needs
-  const communities = source.map((c) => ({
-    id: c.id, name: c.name, involvement: c.involvement, tone: c.tone, parse: c.parse,
-  }));
+  // the field's view of a community — only what the renderer needs. Empty until
+  // setCommunities() is called.
+  let communities: Array<Pick<Community, 'id' | 'name' | 'involvement' | 'tone' | 'parse'>> = [];
 
   const TONE = TONES;
 
@@ -188,9 +196,10 @@ export function initField(canvas: HTMLCanvasElement, source: Community[]): void 
     if (gl) gl.viewport(0, 0, canvas.width, canvas.height);
   }
 
-  function init(): void {
+  function buildBlobs(): void {
     resize();
     blobs.length = 0;
+    if (!communities.length) return;   // no data yet: loop runs, draws nothing
     communities.forEach((c, i) => {
       const r = radiusFor(c.involvement);
       const b: FieldBlob = {
@@ -582,6 +591,15 @@ export function initField(canvas: HTMLCanvasElement, source: Community[]): void 
 
   window.addEventListener('resize', resize);
   if (gl) initGL(gl);
-  init();
+  resize();
   requestAnimationFrame(step);
+
+  return {
+    setCommunities(source: Community[]): void {
+      communities = source.map((c) => ({
+        id: c.id, name: c.name, involvement: c.involvement, tone: c.tone, parse: c.parse,
+      }));
+      buildBlobs();
+    },
+  };
 }

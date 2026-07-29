@@ -4,9 +4,10 @@ import { getEvents, createEvent, deleteEvent } from '../api';
 
 const MONTHS = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
 
-/** Boot the month calendar with its dynamically-placed day modal. Events are
- *  loaded from and persisted to the API. */
-export async function initCalendar(): Promise<void> {
+/** Boot the month calendar with its dynamically-placed day modal. The grid and
+ *  all controls render immediately; events are loaded from (and persisted to)
+ *  the API in the background, so the calendar works even if that load fails. */
+export function initCalendar(): void {
   const key = (d: Date) => d.toISOString().slice(0, 10);
   const GAP = 8;          // breathing room between modal and selected row
   const MIN_H = 210;      // below this a region can't host the panel usefully
@@ -17,13 +18,12 @@ export async function initCalendar(): Promise<void> {
   let selected: Date | null = null;
   let tone: EventTone = 'warm';
 
-  // events, keyed by YYYY-MM-DD, hydrated from the API
+  // events, keyed by YYYY-MM-DD, hydrated from the API in the background (below)
   const events: Record<string, CalEvent[]> = {};
   function ingest(list: CalEvent[]): void {
     for (const k in events) delete events[k];
     for (const ev of list) (events[ev.date] ??= []).push(ev);
   }
-  ingest(await getEvents());
 
   const card = byId('calCard');
   const grid = byId('grid');
@@ -319,4 +319,13 @@ export async function initCalendar(): Promise<void> {
   });
 
   render();
+
+  // hydrate events in the background; the calendar is already interactive
+  getEvents()
+    .then((list) => {
+      ingest(list);
+      render();
+      if (selected && modal.classList.contains('open')) { renderPanel(); placeModal(); }
+    })
+    .catch((err) => console.error('mesh: could not load events', err));
 }

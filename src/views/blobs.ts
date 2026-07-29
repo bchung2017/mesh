@@ -2,33 +2,43 @@ import type { Community } from '../types';
 import { TONE_HEX } from '../field/palette';
 import { byId } from '../dom';
 
+/** Controls the blobs view: feed it community data whenever it arrives. */
+export interface BlobsHandle {
+  setCommunities(communities: Community[]): void;
+}
+
 /**
  * Boot the blobs list + detail sheet. Takes `show` from the tab bar so a clean
- * tap on a blob in the field can land on its full view here, and the community
- * data loaded from the API.
+ * tap on a blob in the field can land on its full view here. All handlers are
+ * wired immediately; call the returned `setCommunities` once data loads, so the
+ * tab stays interactive even before (or without) the API.
  */
-export function initBlobs(show: (id: string) => void, communities: Community[]): void {
+export function initBlobs(show: (id: string) => void): BlobsHandle {
   const list = byId('blob-list');
   const countEl = byId('blob-count');
   const modal = byId('blob-modal');
   const sheet = byId('blob-sheet');
 
-  countEl.textContent = communities.length + ' communities';
+  let communities: Community[] = [];
 
-  communities.forEach((b) => {
-    const row = document.createElement('div');
-    row.className = 'blob-row';
-    const pillClass = b.involvement >= 60 ? 'hot' : b.involvement >= 30 ? 'cool' : 'cold';
-    row.innerHTML =
-      '<div class="mini-blob ' + b.tone + '"></div>' +
-      '<div class="info"><div class="bname"></div>' +
-      '<div class="bmeta">' + b.tenure + ' · ' + b.energy + '</div></div>' +
-      '<span class="inv-pill ' + pillClass + '">' + b.involvement + '</span>' +
-      '<span class="chev">›</span>';
-    row.querySelector('.bname')!.textContent = b.name;
-    row.addEventListener('click', () => openBlob(b));
-    list.appendChild(row);
-  });
+  function renderList(): void {
+    countEl.textContent = communities.length + ' communities';
+    list.innerHTML = '';
+    communities.forEach((b) => {
+      const row = document.createElement('div');
+      row.className = 'blob-row';
+      const pillClass = b.involvement >= 60 ? 'hot' : b.involvement >= 30 ? 'cool' : 'cold';
+      row.innerHTML =
+        '<div class="mini-blob ' + b.tone + '"></div>' +
+        '<div class="info"><div class="bname"></div>' +
+        '<div class="bmeta">' + b.tenure + ' · ' + b.energy + '</div></div>' +
+        '<span class="inv-pill ' + pillClass + '">' + b.involvement + '</span>' +
+        '<span class="chev">›</span>';
+      row.querySelector('.bname')!.textContent = b.name;
+      row.addEventListener('click', () => openBlob(b));
+      list.appendChild(row);
+    });
+  }
 
   function openBlob(b: Community): void {
     const deltaTxt = b.delta > 0 ? '▲ +' + b.delta : b.delta < 0 ? '▼ ' + b.delta : '— 0';
@@ -69,4 +79,11 @@ export function initBlobs(show: (id: string) => void, communities: Community[]):
     show('tab-blobs');
     openBlob(b);
   });
+
+  return {
+    setCommunities(next: Community[]): void {
+      communities = next;
+      renderList();
+    },
+  };
 }
