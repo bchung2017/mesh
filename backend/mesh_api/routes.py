@@ -1,7 +1,7 @@
 """HTTP routes for the mesh API, all under /api."""
 import re
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, current_app, jsonify, request
 
 from . import db
 from .models import Community, Event
@@ -15,7 +15,11 @@ TONES = {"warm", "cool"}
 
 @api.get("/health")
 def health():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "backend": current_app.config.get("MESH_BACKEND"),
+        "schema": current_app.config.get("MESH_DB_SCHEMA"),
+    }
 
 
 @api.get("/communities")

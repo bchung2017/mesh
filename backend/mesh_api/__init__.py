@@ -1,31 +1,25 @@
-"""mesh API — a small Flask + SQLAlchemy service behind the mesh frontend."""
+"""mesh API — a small Flask + SQLAlchemy service behind the mesh frontend.
+
+Zero-config SQLite by default; set DATABASE_URL (+ optional DB_SCHEMA) to swap
+to Postgres/Supabase, isolated inside its own schema so mesh can share one
+database with other apps without collisions. See mesh_api/config.py and the
+stackify-v1 skill for the pattern.
+"""
 import os
 
 from flask import Flask, send_from_directory
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import text
 from dotenv import load_dotenv
+
+from .config import resolve_config
 
 db = SQLAlchemy()
 
 # repo root (…/mesh), where the frontend build lands in dist/
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 DIST_DIR = os.path.join(REPO_ROOT, "dist")
-
-
-def _resolve_database_url(instance_path: str) -> str:
-    """Pick the database URL from the environment, defaulting to a local SQLite file.
-
-    Set DATABASE_URL to point at any SQLAlchemy-supported database. A bare
-    ``postgres://`` URL (as some providers hand out) is normalized to the
-    ``postgresql://`` form SQLAlchemy expects.
-    """
-    url = os.environ.get("DATABASE_URL")
-    if not url:
-        return "sqlite:///" + os.path.join(instance_path, "mesh.db")
-    if url.startswith("postgres://"):
-        url = url.replace("postgres://", "postgresql://", 1)
-    return url
 
 
 def create_app() -> Flask:
@@ -39,8 +33,12 @@ def create_app() -> Flask:
     )
     os.makedirs(app.instance_path, exist_ok=True)
 
-    app.config["SQLALCHEMY_DATABASE_URI"] = _resolve_database_url(app.instance_path)
+    cfg = resolve_config(app.instance_path)
+    app.config["SQLALCHEMY_DATABASE_URI"] = cfg["uri"]
+    app.config["SQLALCHEMY_ENGINE_OPTIONS"] = cfg["engine_options"]
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+    app.config["MESH_BACKEND"] = cfg["backend"]
+    app.config["MESH_DB_SCHEMA"] = cfg["schema"]
 
     db.init_app(app)
     CORS(app, resources={r"/api/*": {"origins": "*"}})
@@ -49,6 +47,13 @@ def create_app() -> Flask:
     app.register_blueprint(api)
 
     with app.app_context():
+        # On Postgres, create the app's schema first (idempotent) so the
+        # unqualified CREATE TABLEs below land in it — search_path is already
+        # pinned to it on the connection. (stackify-v1 rule 4)
+        schema = cfg["schema"]
+        if cfg["backend"] == "postgres" and schema and schema != "public":
+            db.session.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema}"))
+            db.session.commit()
         db.create_all()
         from .seed import seed_if_empty
         seed_if_empty()

@@ -17,7 +17,8 @@ backend over a small JSON API.
 **Backend**
 - **[Flask](https://flask.palletsprojects.com/)** — JSON API + serves the built frontend
 - **[Flask-SQLAlchemy](https://flask-sqlalchemy.palletsprojects.com/)** over **SQLite** by default
-- Configurable via `DATABASE_URL` — point it at any SQLAlchemy-supported database
+- Swaps to **Postgres/Supabase** via `DATABASE_URL`, isolated in its own schema
+  so it can share one database with other apps without colliding
 
 ## Getting started
 
@@ -39,6 +40,50 @@ set `DATABASE_URL`, or export it in the shell:
 
 ```bash
 export DATABASE_URL=postgresql://user:pass@host:5432/mesh
+```
+
+### Sharing one Postgres/Supabase project (no-collision schema)
+
+mesh can live inside its own Postgres **schema** on a database it shares with
+other apps, isolated so it never touches anything outside its namespace. This
+follows the `stackify-v1` pattern (`.claude/skills/stackify-v1/`).
+
+```bash
+# Supabase SESSION pooler host (port :5432 — required, see below)
+export DATABASE_URL='postgresql://postgres.<ref>:<pw>@aws-0-<region>.pooler.supabase.com:5432/postgres'
+export DB_SCHEMA=mesh        # mesh's tables live here; default is public
+```
+
+How it stays collision-proof:
+
+- **`DB_SCHEMA` is validated** as a bare SQL identifier before it's ever
+  interpolated (`^[A-Za-z_][A-Za-z0-9_]*$`), then the schema is created
+  idempotently (`CREATE SCHEMA IF NOT EXISTS`) on first boot.
+- **`search_path` is pinned to the schema per connection** (via libpq
+  `options`), so every unqualified query resolves inside mesh's namespace — a
+  neighbor app's `events` table is simply not on the path.
+- **Session pooler required.** Pinning `search_path` needs a session-mode
+  connection; the Supabase Session pooler (`:5432`) provides it (and is
+  IPv4-friendly). The transaction pooler would drop the path.
+- **`postgres://` URLs are normalized** to `postgresql+psycopg://` (psycopg 3).
+- **Unset `DATABASE_URL` → SQLite, unset `DB_SCHEMA` → `public`.** Isolation is
+  opt-in; nothing changes for single-tenant use.
+
+Migrate an existing SQLite database into the shared schema (guards against
+double-inserting into non-empty tables):
+
+```bash
+cd backend
+python scripts/migrate_sqlite_to_pg.py [path/to/mesh.db]
+```
+
+Additional env vars: `DATABASE_SSL=disable` (local plaintext Postgres only),
+`PGPOOL_MAX` (max pool connections, default 3). See `backend/.env.example`.
+
+Run the backend tests:
+
+```bash
+cd backend && python -m unittest discover -s tests
 ```
 
 ### 2. Frontend
@@ -67,7 +112,7 @@ frontend TypeScript types.
 
 | Method   | Path               | Purpose                                   |
 | -------- | ------------------ | ----------------------------------------- |
-| `GET`    | `/health`          | liveness check                            |
+| `GET`    | `/health`          | liveness + active backend/schema          |
 | `GET`    | `/communities`     | list communities (field + blobs data)     |
 | `GET`    | `/events`          | list calendar events                      |
 | `POST`   | `/events`          | create an event `{date,time,name,tone}`   |
@@ -91,11 +136,15 @@ backend/
   requirements.txt
   .env.example
   mesh_api/
-    __init__.py         create_app factory, db init, static serving
-    config resolution   DATABASE_URL → SQLAlchemy (defaults to SQLite)
+    __init__.py         create_app factory, db init, schema creation, static serving
+    config.py           backend selection + no-collision schema isolation
     models.py           Community, Event (to_dict → camelCase JSON)
     routes.py           /api blueprint
     seed.py             one-time seed of mock data when tables are empty
+  scripts/
+    migrate_sqlite_to_pg.py   one-shot SQLite → Postgres copier (guarded)
+  tests/
+    test_config.py      backend-selection + schema-isolation unit tests
 ```
 
 ## The three views
