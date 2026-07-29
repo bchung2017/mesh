@@ -4,49 +4,98 @@ A warm map of the communities you belong to. Each community is a soft-body
 "blob" sized by how involved you are; drag them around the field, browse them as
 a list, or plan gatherings on the calendar.
 
-This started life as a single self-contained HTML prototype and has been split
-into a proper Vite + TypeScript project.
+Full stack: a **Vite + TypeScript** frontend talking to a **Flask + SQLite**
+backend over a small JSON API.
 
 ## Stack
 
+**Frontend**
 - **[Vite](https://vitejs.dev/)** — dev server + build
 - **TypeScript** — typed, no runtime framework (the app is canvas + imperative DOM)
 - **WebGL** with a 2D-canvas fallback for the blob field
 
+**Backend**
+- **[Flask](https://flask.palletsprojects.com/)** — JSON API + serves the built frontend
+- **[Flask-SQLAlchemy](https://flask-sqlalchemy.palletsprojects.com/)** over **SQLite** by default
+- Configurable via `DATABASE_URL` — point it at any SQLAlchemy-supported database
+
 ## Getting started
+
+### 1. Backend
+
+```bash
+cd backend
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+python wsgi.py            # serves the API on http://localhost:5000
+```
+
+On first run it creates the SQLite database (`backend/instance/mesh.db`) and
+seeds it with the mock communities and a few events.
+
+To use a different database, copy `backend/.env.example` to `backend/.env` and
+set `DATABASE_URL`, or export it in the shell:
+
+```bash
+export DATABASE_URL=postgresql://user:pass@host:5432/mesh
+```
+
+### 2. Frontend
 
 ```bash
 npm install
-npm run dev      # start the dev server
-npm run build    # typecheck + production build to dist/
-npm run preview  # preview the production build
+npm run dev              # http://localhost:5173, proxies /api to :5000
 ```
+
+Vite proxies `/api/*` to the Flask server, so both run side by side in dev.
+Override the target with `MESH_API_URL` if the backend is elsewhere.
+
+### Production (single origin)
+
+```bash
+npm run build            # emits dist/
+cd backend && python wsgi.py   # Flask serves dist/ AND the API on one port
+```
+
+Or point a WSGI server at it: `gunicorn wsgi:app` (from `backend/`).
+
+## API
+
+Base path `/api`. All community/event fields use the same camelCase keys as the
+frontend TypeScript types.
+
+| Method   | Path               | Purpose                                   |
+| -------- | ------------------ | ----------------------------------------- |
+| `GET`    | `/health`          | liveness check                            |
+| `GET`    | `/communities`     | list communities (field + blobs data)     |
+| `GET`    | `/events`          | list calendar events                      |
+| `POST`   | `/events`          | create an event `{date,time,name,tone}`   |
+| `DELETE` | `/events/:id`      | delete an event                           |
 
 ## Layout
 
 ```
 index.html              markup only (no inline styles or scripts)
+vite.config.ts          build + /api dev proxy
 src/
-  main.ts               entry point — imports styles, boots every view
+  main.ts               entry — loads data from the API, boots every view
+  api.ts                typed fetch wrappers for the backend
   types.ts              shared types (Community, CalEvent, tones…)
   dom.ts                byId() helper
-  data/
-    communities.ts      single source of truth for community data
-  styles/
-    tokens.css          design tokens (colors, fonts)
-    base.css            reset, layout, tabs
-    field.css           the blob field + nudges
-    calendar.css        month grid + day modal
-    blobs.css           blob list + detail sheet
-  field/
-    palette.ts          per-tone color specs (WebGL + hex)
-    texture.ts          bakes each blob's shaded ball + lens-warped label
-    blobField.ts        the soft-body physics engine + renderers
-  views/
-    tabs.ts             top tab bar
-    blobs.ts            blob list + detail sheet + field→sheet bridge
-    calendar.ts         month calendar with dynamic modal placement
-    nudges.ts           the nudges toggle
+  styles/               design tokens + per-view CSS
+  field/                blob field: palette, texture bake, physics engine
+  views/                tabs, blobs list + sheet, calendar, nudges
+backend/
+  wsgi.py               dev entry / WSGI app (wsgi:app)
+  requirements.txt
+  .env.example
+  mesh_api/
+    __init__.py         create_app factory, db init, static serving
+    config resolution   DATABASE_URL → SQLAlchemy (defaults to SQLite)
+    models.py           Community, Event (to_dict → camelCase JSON)
+    routes.py           /api blueprint
+    seed.py             one-time seed of mock data when tables are empty
 ```
 
 ## The three views
@@ -57,6 +106,7 @@ src/
 - **blobs** — every community as a row; tap for a detail sheet (involvement
   trend, tenure, energy, last artifact, next gathering, and the read).
 - **calendar** — a month grid where the day modal is placed dynamically so it
-  never buries today or a precious near-future day.
+  never buries today or a precious near-future day. Events are loaded from and
+  persisted to the backend.
 
 All data is mock and community-level only — no people, no rosters.

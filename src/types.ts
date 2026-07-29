@@ -18,9 +18,14 @@ export interface Community {
   note: string;
 }
 
-/** A single dated thing on the calendar. */
+/** A single dated thing on the calendar, as stored by the API. */
 export interface CalEvent {
-  t: string;
-  n: string;
+  id: number;
+  date: string;   // YYYY-MM-DD
+  time: string;   // HH:MM
+  name: string;
   tone: EventTone;
 }
+
+/** Fields needed to create a new event (the server assigns id). */
+export type NewEvent = Omit<CalEvent, 'id'>;

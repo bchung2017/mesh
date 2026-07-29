@@ -1,21 +1,21 @@
 import type { Community } from '../types';
-import { COMMUNITIES } from '../data/communities';
 import { TONE_HEX } from '../field/palette';
 import { byId } from '../dom';
 
 /**
  * Boot the blobs list + detail sheet. Takes `show` from the tab bar so a clean
- * tap on a blob in the field can land on its full view here.
+ * tap on a blob in the field can land on its full view here, and the community
+ * data loaded from the API.
  */
-export function initBlobs(show: (id: string) => void): void {
+export function initBlobs(show: (id: string) => void, communities: Community[]): void {
   const list = byId('blob-list');
   const countEl = byId('blob-count');
   const modal = byId('blob-modal');
   const sheet = byId('blob-sheet');
 
-  countEl.textContent = COMMUNITIES.length + ' communities';
+  countEl.textContent = communities.length + ' communities';
 
-  COMMUNITIES.forEach((b) => {
+  communities.forEach((b) => {
     const row = document.createElement('div');
     row.className = 'blob-row';
     const pillClass = b.involvement >= 60 ? 'hot' : b.involvement >= 30 ? 'cool' : 'cold';
@@ -64,7 +64,7 @@ export function initBlobs(show: (id: string) => void): void {
 
   // field -> blob sheet: a clean tap on a blob in the field lands on its full view
   byId('field').addEventListener('blobclick', (e) => {
-    const b = COMMUNITIES.find((x) => x.id === (e as CustomEvent).detail.id);
+    const b = communities.find((x) => x.id === (e as CustomEvent).detail.id);
     if (!b) return;
     show('tab-blobs');
     openBlob(b);

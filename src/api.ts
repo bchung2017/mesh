@@ -1,0 +1,36 @@
+import type { Community, CalEvent, NewEvent } from './types';
+
+// All requests go to the Flask API. In dev, Vite proxies /api to the backend
+// (see vite.config.ts); in production Flask serves this bundle and the API from
+// the same origin, so a relative base works everywhere.
+const BASE = '/api';
+
+async function asJson<T>(res: Response): Promise<T> {
+  if (!res.ok) {
+    let detail = '';
+    try { detail = JSON.stringify(await res.json()); } catch { /* ignore */ }
+    throw new Error(`mesh api ${res.status} ${res.statusText} ${detail}`.trim());
+  }
+  return res.json() as Promise<T>;
+}
+
+export function getCommunities(): Promise<Community[]> {
+  return fetch(`${BASE}/communities`).then((r) => asJson<Community[]>(r));
+}
+
+export function getEvents(): Promise<CalEvent[]> {
+  return fetch(`${BASE}/events`).then((r) => asJson<CalEvent[]>(r));
+}
+
+export function createEvent(input: NewEvent): Promise<CalEvent> {
+  return fetch(`${BASE}/events`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  }).then((r) => asJson<CalEvent>(r));
+}
+
+export async function deleteEvent(id: number): Promise<void> {
+  const res = await fetch(`${BASE}/events/${id}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error(`mesh api ${res.status} deleting event ${id}`);
+}

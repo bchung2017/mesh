@@ -1,10 +1,12 @@
 import type { CalEvent, EventTone } from '../types';
 import { byId } from '../dom';
+import { getEvents, createEvent, deleteEvent } from '../api';
 
 const MONTHS = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
 
-/** Boot the month calendar with its dynamically-placed day modal. */
-export function initCalendar(): void {
+/** Boot the month calendar with its dynamically-placed day modal. Events are
+ *  loaded from and persisted to the API. */
+export async function initCalendar(): Promise<void> {
   const key = (d: Date) => d.toISOString().slice(0, 10);
   const GAP = 8;          // breathing room between modal and selected row
   const MIN_H = 210;      // below this a region can't host the panel usefully
@@ -15,20 +17,20 @@ export function initCalendar(): void {
   let selected: Date | null = null;
   let tone: EventTone = 'warm';
 
+  // events, keyed by YYYY-MM-DD, hydrated from the API
   const events: Record<string, CalEvent[]> = {};
-  const seed = (d: Date, list: CalEvent[]) => { events[key(d)] = list; };
-  seed(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 2),
-    [{ t: '19:00', n: 'hardware meetup', tone: 'warm' }]);
-  seed(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 5),
-    [{ t: '12:30', n: 'book circle', tone: 'warm' }, { t: '09:00', n: 'dentist', tone: 'cool' }]);
-  seed(new Date(now.getFullYear(), now.getMonth(), 28),
-    [{ t: '18:00', n: 'monthly review', tone: 'cool' }]);
+  function ingest(list: CalEvent[]): void {
+    for (const k in events) delete events[k];
+    for (const ev of list) (events[ev.date] ??= []).push(ev);
+  }
+  ingest(await getEvents());
 
   const card = byId('calCard');
   const grid = byId('grid');
   const dowRow = byId('dowRow');
   const modal = byId('dayModal');
   const monthName = byId('monthName');
+  const calTab = byId('tab-cal');
   const subline = byId('subline');
   const panelDate = byId('panelDate');
   const panelCount = byId('panelCount');
@@ -53,10 +55,14 @@ export function initCalendar(): void {
 
   function render(): void {
     monthName.textContent = MONTHS[view.getMonth()] + ' ' + view.getFullYear();
-    const warm = monthEventCount();
-    subline.textContent = warm === 0 ? 'a quiet month so far'
-      : warm === 1 ? '1 gathering this month'
-      : warm + ' gatherings this month';
+    // only own the subline while the calendar tab is showing (the tab bar owns
+    // the home copy otherwise, and this render can resolve after tab setup)
+    if (calTab.classList.contains('on')) {
+      const warm = monthEventCount();
+      subline.textContent = warm === 0 ? 'a quiet month so far'
+        : warm === 1 ? '1 gathering this month'
+        : warm + ' gatherings this month';
+    }
 
     grid.innerHTML = '';
     const first = new Date(view.getFullYear(), view.getMonth(), 1);
@@ -209,7 +215,7 @@ export function initCalendar(): void {
   function renderPanel(): void {
     if (!selected) return;
     panelDate.textContent = fmtDay(selected);
-    const evs = (events[key(selected)] || []).slice().sort((a, b) => a.t.localeCompare(b.t));
+    const evs = (events[key(selected)] || []).slice().sort((a, b) => a.time.localeCompare(b.time));
     panelCount.textContent = evs.length === 0 ? '' : evs.length === 1 ? '1 thing' : evs.length + ' things';
     eventList.innerHTML = '';
 
@@ -224,36 +230,54 @@ export function initCalendar(): void {
       const row = document.createElement('div');
       row.className = 'event ' + ev.tone;
       row.innerHTML =
-        '<span class="time">' + ev.t + '</span>' +
+        '<span class="time">' + ev.time + '</span>' +
         '<span class="name"></span>' +
         '<button class="x" aria-label="remove">&#215;</button>';
-      row.querySelector('.name')!.textContent = ev.n;
+      row.querySelector('.name')!.textContent = ev.name;
       row.querySelector('.x')!.addEventListener('click', (e) => {
         e.stopPropagation();
-        const arr = events[key(selected!)];
-        arr.splice(arr.indexOf(ev), 1);
-        if (!arr.length) delete events[key(selected!)];
-        render(); renderPanel(); placeModal();
+        removeEvent(ev);
       });
       eventList.appendChild(row);
     });
+  }
+
+  function removeEvent(ev: CalEvent): void {
+    // optimistic: drop it locally, then tell the server
+    const k = ev.date;
+    const arr = events[k];
+    if (arr) {
+      arr.splice(arr.indexOf(ev), 1);
+      if (!arr.length) delete events[k];
+    }
+    render(); renderPanel(); placeModal();
+    deleteEvent(ev.id).catch((err) => console.error('mesh: failed to delete event', err));
   }
 
   byId('addBtn').addEventListener('click', addEvent);
   byId('evName').addEventListener('keydown', (e) => {
     if ((e as KeyboardEvent).key === 'Enter') addEvent();
   });
-  function addEvent(): void {
+  async function addEvent(): Promise<void> {
+    if (!selected) return;
     const nameEl = byId<HTMLInputElement>('evName');
     const n = nameEl.value.trim();
     if (!n) { nameEl.focus(); return; }
     const t = byId<HTMLInputElement>('evTime').value || '18:00';
-    const k = key(selected!);
-    if (!events[k]) events[k] = [];
-    events[k].push({ t, n, tone });
-    nameEl.value = '';
-    render(); renderPanel(); placeModal();
-    nameEl.focus();
+    const k = key(selected);
+    const btn = byId<HTMLButtonElement>('addBtn');
+    btn.disabled = true;
+    try {
+      const created = await createEvent({ date: k, time: t, name: n, tone });
+      (events[k] ??= []).push(created);
+      nameEl.value = '';
+      render(); renderPanel(); placeModal();
+    } catch (err) {
+      console.error('mesh: failed to add event', err);
+    } finally {
+      btn.disabled = false;
+      nameEl.focus();
+    }
   }
 
   document.querySelectorAll('.tone-chip').forEach((chip) => {

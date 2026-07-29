@@ -1,5 +1,4 @@
-import type { Tone } from '../types';
-import { COMMUNITIES } from '../data/communities';
+import type { Community, Tone } from '../types';
 import { TONES } from './palette';
 import { bakeTexture } from './texture';
 
@@ -23,18 +22,18 @@ interface FieldBlob {
   tex: WebGLTexture | HTMLCanvasElement;
 }
 
-/** The field's view of a community — only what the renderer needs. */
-const communities = COMMUNITIES.map((c) => ({
-  id: c.id, name: c.name, involvement: c.involvement, tone: c.tone, parse: c.parse,
-}));
-
 /**
  * Boot the WebGL (with 2D fallback) soft-body blob field on the given canvas.
  * Each blob is a community, sized by involvement; drag them around, and a clean
  * tap dispatches a `blobclick` CustomEvent on the canvas.
  */
-export function initField(canvas: HTMLCanvasElement): void {
+export function initField(canvas: HTMLCanvasElement, source: Community[]): void {
   let W: number, H: number, DPR: number;
+
+  // the field's view of a community — only what the renderer needs
+  const communities = source.map((c) => ({
+    id: c.id, name: c.name, involvement: c.involvement, tone: c.tone, parse: c.parse,
+  }));
 
   const TONE = TONES;
 
