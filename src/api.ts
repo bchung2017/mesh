@@ -1,4 +1,4 @@
-import type { Community, CalEvent, NewEvent } from './types';
+import type { CommunityData, CalEvent, NewEvent } from './types';
 
 // All requests go to the Flask API. In dev, Vite proxies /api to the backend
 // (see vite.config.ts); in production Flask serves this bundle and the API from
@@ -14,8 +14,8 @@ async function asJson<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export function getCommunities(): Promise<Community[]> {
-  return fetch(`${BASE}/communities`).then((r) => asJson<Community[]>(r));
+export function getCommunities(): Promise<CommunityData[]> {
+  return fetch(`${BASE}/communities`).then((r) => asJson<CommunityData[]>(r));
 }
 
 export function getEvents(): Promise<CalEvent[]> {

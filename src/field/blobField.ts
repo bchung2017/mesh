@@ -1,51 +1,34 @@
-import type { Community, Tone } from '../types';
+import type { Blob, Community } from '../types';
 import { TONES } from './palette';
 import { bakeTexture } from './texture';
 
-interface Dent { angle: number; depth: number; dvel: number; target: number; slow: number; }
-interface Reach { angle: number; amt: number; target: number; }
-
-interface FieldBlob {
-  id: string;
-  name: string;
-  involvement: number;
-  tone: Tone;
-  parse: string;
-  r: number;
-  x: number; y: number;
-  vx: number; vy: number;
-  px: number; py: number;
-  phase: number;
-  dents: Record<string, Dent>;
-  reach: Record<string, Reach>;
-  wobA: number; wobV: number; wobAng: number;
-  tex: WebGLTexture | HTMLCanvasElement;
-}
-
-/** Controls a running field: feed it community data whenever it arrives. */
+/**
+ * Controls a running field. The engine holds a reference to the SAME
+ * `Community[]` store the rest of the app uses and mutates each community's
+ * `blob` in place; it never reads community fields as state or clones the array.
+ * `store.ts`'s reconcile() drives these as data flows in.
+ */
 export interface FieldHandle {
-  setCommunities(source: Community[]): void;
+  attach(c: Community): void;   // spawn c.blob (physics state + baked texture)
+  detach(c: Community): void;   // free the texture, c.blob = null
+  rebake(c: Community): void;   // recompute r + texture after involvement/tone change
 }
 
 /**
- * Boot the WebGL (with 2D fallback) soft-body blob field on the given canvas.
- * Each blob is a community, sized by involvement; drag them around, and a clean
- * tap dispatches a `blobclick` CustomEvent on the canvas.
+ * Boot the WebGL (with 2D fallback) soft-body blob field on the given canvas,
+ * over the shared `communities` store. Each community is a blob, sized by
+ * involvement; drag them around, and a clean tap dispatches a `blobclick`
+ * CustomEvent on the canvas.
  *
- * The animation loop starts immediately with no blobs; call the returned
- * `setCommunities` once data loads. That keeps the field (and the rest of the
- * UI) interactive even if the API is slow or down.
+ * The animation loop starts immediately; communities gain a `blob` only when
+ * attach() is called (via reconcile). That keeps the field — and the rest of
+ * the UI — interactive even if the API is slow or down.
  */
-export function initField(canvas: HTMLCanvasElement): FieldHandle {
+export function initField(canvas: HTMLCanvasElement, communities: Community[]): FieldHandle {
   let W: number, H: number, DPR: number;
-
-  // the field's view of a community — only what the renderer needs. Empty until
-  // setCommunities() is called.
-  let communities: Array<Pick<Community, 'id' | 'name' | 'involvement' | 'tone' | 'parse'>> = [];
 
   const TONE = TONES;
 
-  const blobs: FieldBlob[] = [];
   const R_MIN = 26, R_MAX = 78;
 
   const SQUISH_K      = 0.13;
@@ -196,32 +179,48 @@ export function initField(canvas: HTMLCanvasElement): FieldHandle {
     if (gl) gl.viewport(0, 0, canvas.width, canvas.height);
   }
 
-  function buildBlobs(): void {
+  // ---------------- blob lifecycle (r + tex derived from community fields) ----------------
+  function bake(c: Community, b: Blob): void {
+    const baked = bakeTexture({ r: b.r, tone: c.tone, name: c.name, parse: c.parse, id: c.id });
+    b.tex = gl ? makeGLTexture(gl, baked) : baked;   // GL texture or the raw canvas, per renderer
+  }
+  function freeTex(b: Blob): void {
+    if (gl && b.tex) gl.deleteTexture(b.tex as WebGLTexture);
+  }
+  function attach(c: Community): void {
     resize();
-    blobs.length = 0;
-    if (!communities.length) return;   // no data yet: loop runs, draws nothing
-    communities.forEach((c, i) => {
-      const r = radiusFor(c.involvement);
-      const b: FieldBlob = {
-        ...c, r,
-        x: (W / (communities.length + 1)) * (i + 1),
-        y: H / 2 + (i % 2 ? -30 : 30),
-        vx: (Math.random() - .5) * 0.04, vy: (Math.random() - .5) * 0.04,
-        px: 0, py: 0,
-        phase: Math.random() * Math.PI * 2,
-        dents: {},
-        reach: {},          // proximity lobes: surface leans toward near neighbors pre-contact
-        wobA: 0, wobV: 0, wobAng: 0,
-        tex: null as any,
-      };
-      const baked = bakeTexture(b);
-      b.tex = gl ? makeGLTexture(gl, baked) : baked;   // GL texture or the raw canvas, per renderer
-      blobs.push(b);
-    });
+    const i = communities.indexOf(c);
+    const n = communities.length;
+    const b: Blob = {
+      x: (W / (n + 1)) * (i + 1),
+      y: H / 2 + (i % 2 ? -30 : 30),
+      vx: (Math.random() - .5) * 0.04, vy: (Math.random() - .5) * 0.04,
+      px: 0, py: 0,
+      r: radiusFor(c.involvement),
+      phase: Math.random() * Math.PI * 2,
+      dents: {},
+      reach: {},          // proximity lobes: surface leans toward near neighbors pre-contact
+      wobA: 0, wobV: 0, wobAng: 0,
+      tex: null,
+    };
+    bake(c, b);
+    c.blob = b;
+  }
+  function detach(c: Community): void {
+    if (c.blob) freeTex(c.blob);
+    c.blob = null;
+  }
+  function rebake(c: Community): void {
+    const b = c.blob;
+    if (!b) return;
+    const old = b.tex;
+    b.r = radiusFor(c.involvement);
+    bake(c, b);
+    if (gl && old && old !== b.tex) gl.deleteTexture(old as WebGLTexture);
   }
 
   // ---------------- input ----------------
-  const ptr = { x: -1e4, y: -1e4, vx: 0, vy: 0, down: false, drag: null as FieldBlob | null, ox: 0, oy: 0, downX: 0, downY: 0, moved: 0 };
+  const ptr = { x: -1e4, y: -1e4, vx: 0, vy: 0, down: false, drag: null as Community | null, ox: 0, oy: 0, downX: 0, downY: 0, moved: 0 };
   const tooltip = document.createElement('div');
   tooltip.style.cssText = 'position:absolute;pointer-events:none;display:none;background:rgba(27,42,74,0.92);color:#fff;font:600 12px "Helvetica Neue",Helvetica,Arial,sans-serif;padding:5px 10px;border-radius:8px;white-space:nowrap;z-index:5';
   canvas.parentElement!.style.position = 'relative';
@@ -232,10 +231,10 @@ export function initField(canvas: HTMLCanvasElement): FieldHandle {
     const t = (e as TouchEvent).touches ? (e as TouchEvent).touches[0] : (e as MouseEvent);
     return { x: t.clientX - rect.left, y: t.clientY - rect.top };
   }
-  function pick(x: number, y: number): FieldBlob | null {
-    for (let i = blobs.length - 1; i >= 0; i--) {
-      const b = blobs[i];
-      if (Math.hypot(x - b.x, y - b.y) <= b.r) return b;
+  function pick(x: number, y: number): Community | null {
+    for (let i = communities.length - 1; i >= 0; i--) {
+      const c = communities[i], b = c.blob;
+      if (b && Math.hypot(x - b.x, y - b.y) <= b.r) return c;
     }
     return null;
   }
@@ -243,8 +242,8 @@ export function initField(canvas: HTMLCanvasElement): FieldHandle {
     const p = toLocal(e);
     ptr.down = true; ptr.x = p.x; ptr.y = p.y;
     ptr.downX = p.x; ptr.downY = p.y; ptr.moved = 0;
-    const b = pick(p.x, p.y);
-    if (b) { ptr.drag = b; ptr.ox = p.x - b.x; ptr.oy = p.y - b.y; canvas.classList.add('grabbing'); e.preventDefault(); }
+    const c = pick(p.x, p.y);
+    if (c && c.blob) { ptr.drag = c; ptr.ox = p.x - c.blob.x; ptr.oy = p.y - c.blob.y; canvas.classList.add('grabbing'); e.preventDefault(); }
   }
   function onMove(e: MouseEvent | TouchEvent): void {
     const p = toLocal(e);
@@ -252,18 +251,19 @@ export function initField(canvas: HTMLCanvasElement): FieldHandle {
     ptr.vy = ptr.vy * 0.6 + (p.y - ptr.y) * 0.4;
     if (ptr.down) { ptr.moved += Math.hypot(p.x - ptr.x, p.y - ptr.y); }
     ptr.x = p.x; ptr.y = p.y;
-    if (ptr.drag) {
-      ptr.drag.x = p.x - ptr.ox; ptr.drag.y = p.y - ptr.oy;
-      ptr.drag.vx = 0; ptr.drag.vy = 0;
+    if (ptr.drag && ptr.drag.blob) {
+      const b = ptr.drag.blob;
+      b.x = p.x - ptr.ox; b.y = p.y - ptr.oy;
+      b.vx = 0; b.vy = 0;
       e.preventDefault();
     }
   }
   function onUp(): void {
-    if (ptr.drag) {
-      const b = ptr.drag;
+    if (ptr.drag && ptr.drag.blob) {
+      const c = ptr.drag, b = c.blob!;
       // clean tap (< 6px total travel) = open the blob, not a throw
       if (ptr.moved < 6) {
-        canvas.dispatchEvent(new CustomEvent('blobclick', { detail: { id: b.id }, bubbles: true }));
+        canvas.dispatchEvent(new CustomEvent('blobclick', { detail: { id: c.id }, bubbles: true }));
       } else {
         b.vx = Math.max(-3, Math.min(3, ptr.vx * 0.3));
         b.vy = Math.max(-3, Math.min(3, ptr.vy * 0.3));
@@ -282,27 +282,27 @@ export function initField(canvas: HTMLCanvasElement): FieldHandle {
   window.addEventListener('touchend', onUp);
   canvas.addEventListener('mouseleave', () => { ptr.x = -1e4; ptr.y = -1e4; });
 
-  // ---------------- soft-body state ----------------
-  function exciteWobble(b: FieldBlob, amp: number, angle: number): void {
+  // ---------------- soft-body state (operates on Blob physics state) ----------------
+  function exciteWobble(b: Blob, amp: number, angle: number): void {
     b.wobA += amp; b.wobAng = angle;
     b.wobA = Math.min(b.wobA, b.r * 0.22);
   }
-  function setReach(b: FieldBlob, key: string, angle: number, target: number): void {
+  function setReach(b: Blob, key: string, angle: number, target: number): void {
     let r = b.reach[key];
     if (!r) { r = b.reach[key] = { angle, amt: 0, target: 0 }; }
     r.angle = angle;
     r.target = Math.max(r.target, target);
   }
 
-  function pressDent(b: FieldBlob, key: string, angle: number, target: number): void {
+  function pressDent(b: Blob, key: string, angle: number, target: number): void {
     let d = b.dents[key];
     if (!d) { d = b.dents[key] = { angle, depth: 0, dvel: 0, target: 0, slow: 0 }; }
     d.angle = angle;
     d.target = Math.max(d.target, target);
   }
-  function clampDent(b: FieldBlob, v: number): number { return Math.min(v, b.r * DENT_MAX_FRAC); }
+  function clampDent(b: Blob, v: number): number { return Math.min(v, b.r * DENT_MAX_FRAC); }
 
-  function radiusAt(b: FieldBlob, theta: number, base: number): number {
+  function radiusAt(b: Blob, theta: number, base: number): number {
     let r = base, total = 0;
     if (Math.abs(b.wobA) > 0.05) {
       r += b.wobA * Math.cos(2 * (theta - b.wobAng));
@@ -331,7 +331,7 @@ export function initField(canvas: HTMLCanvasElement): FieldHandle {
     return r + total * 0.30;
   }
 
-  function squashTotal(b: FieldBlob): number {
+  function squashTotal(b: Blob): number {
     let t = 0; for (const k in b.dents) t += Math.max(0, b.dents[k].depth); return t;
   }
 
@@ -340,14 +340,18 @@ export function initField(canvas: HTMLCanvasElement): FieldHandle {
     const ease = grace > 0 ? (grace--, 1 - grace / 45) : 1;
     const hover = ptr.drag || pick(ptr.x, ptr.y);
 
-    for (const b of blobs) {
+    for (const c of communities) {
+      const b = c.blob;
+      if (!b) continue;
       b.px = b.x; b.py = b.y;
       for (const k in b.dents) b.dents[k].target = 0;
       for (const k in b.reach) b.reach[k].target = 0;
     }
 
-    for (const b of blobs) {
-      if (b === ptr.drag) continue;
+    for (const c of communities) {
+      const b = c.blob;
+      if (!b) continue;
+      if (c === ptr.drag) continue;
       b.phase += 0.002;
       b.x += b.vx; b.y += b.vy;
       b.vx *= 0.995; b.vy *= 0.995;
@@ -371,8 +375,10 @@ export function initField(canvas: HTMLCanvasElement): FieldHandle {
       if (b.y > H - b.r) { b.y = H - b.r; b.vy = -Math.abs(b.vy) * 0.78; pressDent(b, 'wB', Math.PI / 2, clampDent(b, (b.y - (H - b.r) + 1) * 0.5)); }
     }
 
-    for (let i = 0; i < blobs.length; i++) for (let j = i + 1; j < blobs.length; j++) {
-      const a = blobs[i], b = blobs[j];
+    for (let i = 0; i < communities.length; i++) for (let j = i + 1; j < communities.length; j++) {
+      const ca = communities[i], cb = communities[j];
+      const a = ca.blob, b = cb.blob;
+      if (!a || !b) continue;
       const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 0.01, min = a.r + b.r + 4;
       const NEAR = 48;
       if (d >= min && d < min + NEAR) {
@@ -381,33 +387,33 @@ export function initField(canvas: HTMLCanvasElement): FieldHandle {
         const closeness = 1 - gap / NEAR;
         const ma = a.r * a.r, mb = b.r * b.r;
         const Fa = closeness * 3.0;              // weak pull; contact spring dominates on touch
-        if (a !== ptr.drag) { a.vx += nx * Fa / ma; a.vy += ny * Fa / ma; }
-        if (b !== ptr.drag) { b.vx -= nx * Fa / mb; b.vy -= ny * Fa / mb; }
+        if (ca !== ptr.drag) { a.vx += nx * Fa / ma; a.vy += ny * Fa / ma; }
+        if (cb !== ptr.drag) { b.vx -= nx * Fa / mb; b.vy -= ny * Fa / mb; }
         // reach: each surface leans toward the neighbor, small blob reaches more
         const rAmt = closeness * closeness * 5;  // quadratic: only blooms when genuinely close
-        setReach(a, 'b' + b.id, Math.atan2(dy, dx), rAmt * (b.r / (a.r + b.r)) * 2);
-        setReach(b, 'b' + a.id, Math.atan2(-dy, -dx), rAmt * (a.r / (a.r + b.r)) * 2);
+        setReach(a, 'b' + cb.id, Math.atan2(dy, dx), rAmt * (b.r / (a.r + b.r)) * 2);
+        setReach(b, 'b' + ca.id, Math.atan2(-dy, -dx), rAmt * (a.r / (a.r + b.r)) * 2);
       }
       if (d < min) {
         const overlap = min - d, nx = dx / d, ny = dy / d;
-        const avx = a === ptr.drag ? a.x - a.px : a.vx, avy = a === ptr.drag ? a.y - a.py : a.vy;
-        const bvx = b === ptr.drag ? b.x - b.px : b.vx, bvy = b === ptr.drag ? b.y - b.py : b.vy;
+        const avx = ca === ptr.drag ? a.x - a.px : a.vx, avy = ca === ptr.drag ? a.y - a.py : a.vy;
+        const bvx = cb === ptr.drag ? b.x - b.px : b.vx, bvy = cb === ptr.drag ? b.y - b.py : b.vy;
         const approach = Math.max(0, (avx - bvx) * nx + (avy - bvy) * ny);
 
         const ma = a.r * a.r, mb = b.r * b.r, msum = ma + mb;
         const F = (overlap * 30 + approach * 40) * ease;
         const ja = F / ma, jb = F / mb;
-        if (a !== ptr.drag) { a.vx -= nx * ja; a.vy -= ny * ja; }
-        if (b !== ptr.drag) { b.vx += nx * jb; b.vy += ny * jb; }
+        if (ca !== ptr.drag) { a.vx -= nx * ja; a.vy -= ny * ja; }
+        if (cb !== ptr.drag) { b.vx += nx * jb; b.vy += ny * jb; }
         const corr = overlap * 0.02;
-        if (a !== ptr.drag) { a.x -= nx * corr * (mb / msum); a.y -= ny * corr * (mb / msum); }
-        if (b !== ptr.drag) { b.x += nx * corr * (ma / msum); b.y += ny * corr * (ma / msum); }
+        if (ca !== ptr.drag) { a.x -= nx * corr * (mb / msum); a.y -= ny * corr * (mb / msum); }
+        if (cb !== ptr.drag) { b.x += nx * corr * (ma / msum); b.y += ny * corr * (ma / msum); }
 
         const total = (overlap * DENT_PER_OVLP + approach * DENT_MOMENTUM) * ease;
         const aShare = total * (b.r / (a.r + b.r));
         const bShare = total * (a.r / (a.r + b.r));
-        pressDent(a, 'b' + b.id, Math.atan2(dy, dx), clampDent(a, aShare));
-        pressDent(b, 'b' + a.id, Math.atan2(-dy, -dx), clampDent(b, bShare));
+        pressDent(a, 'b' + cb.id, Math.atan2(dy, dx), clampDent(a, aShare));
+        pressDent(b, 'b' + ca.id, Math.atan2(-dy, -dx), clampDent(b, bShare));
         if (approach > 0.8) {
           exciteWobble(a, approach * 1.2 * (b.r / (a.r + b.r)), Math.atan2(dy, dx));
           exciteWobble(b, approach * 1.2 * (a.r / (a.r + b.r)), Math.atan2(-dy, -dx));
@@ -415,7 +421,9 @@ export function initField(canvas: HTMLCanvasElement): FieldHandle {
       }
     }
 
-    for (const b of blobs) {
+    for (const c of communities) {
+      const b = c.blob;
+      if (!b) continue;
       for (const k in b.dents) {
         const d = b.dents[k];
         if (d.target > d.depth) {
@@ -429,7 +437,7 @@ export function initField(canvas: HTMLCanvasElement): FieldHandle {
           d.dvel *= SQUISH_DAMP;
           d.depth += d.dvel;
         }
-        if (d.dvel < 0 && b !== ptr.drag && k[0] === 'w') {
+        if (d.dvel < 0 && c !== ptr.drag && k[0] === 'w') {
           b.vx -= Math.cos(d.angle) * (-d.dvel) * 0.04;
           b.vy -= Math.sin(d.angle) * (-d.dvel) * 0.04;
         }
@@ -452,7 +460,7 @@ export function initField(canvas: HTMLCanvasElement): FieldHandle {
   }
 
   // ---------------- GL draw ----------------
-  function fillMesh(b: FieldBlob, base: number, offset: number): void {
+  function fillMesh(b: Blob, base: number, offset: number): void {
     let vi = 0;
     positions[vi++] = b.x; positions[vi++] = b.y;
     for (let ri = 1; ri <= RINGS; ri++) {
@@ -478,7 +486,7 @@ export function initField(canvas: HTMLCanvasElement): FieldHandle {
     g.drawElements(g.TRIANGLES, idxCount, g.UNSIGNED_SHORT, 0);
   }
 
-  function draw(hover: FieldBlob | null): void {
+  function draw(hover: Community | null): void {
     if (!gl) { draw2D(hover); return; }
     const g = gl;
     g.clear(g.COLOR_BUFFER_BIT);
@@ -487,10 +495,12 @@ export function initField(canvas: HTMLCanvasElement): FieldHandle {
     g.uniform1i(loc.uTex, 0);
     g.activeTexture(g.TEXTURE0);
 
-    for (const b of blobs) {
+    for (const c of communities) {
+      const b = c.blob;
+      if (!b) continue;
       const breathe = 1 + Math.sin(b.phase * 1.2) * 0.015;
       const base = b.r * breathe;
-      const tone = TONE[b.tone];
+      const tone = TONE[c.tone];
 
       // halo: same mesh, +10px, flat color
       g.bindTexture(g.TEXTURE_2D, b.tex as WebGLTexture);
@@ -508,7 +518,7 @@ export function initField(canvas: HTMLCanvasElement): FieldHandle {
       g.uniform1f(loc.uBright, 0.0);
 
       // hover ring: thin flat-color shell
-      if (hover === b) {
+      if (hover === c) {
         fillMesh(b, base, 5);
         g.uniform1f(loc.uUseTex, 0.0);
         g.uniform4fv(loc.uColor, [tone.halo[0], tone.halo[1], tone.halo[2], 0.85]);
@@ -527,12 +537,13 @@ export function initField(canvas: HTMLCanvasElement): FieldHandle {
     updateTooltip(hover);
   }
 
-  function updateTooltip(hover: FieldBlob | null): void {
-    if (hover && hover.r <= 44) {
+  function updateTooltip(hover: Community | null): void {
+    const b = hover ? hover.blob : null;
+    if (hover && b && b.r <= 44) {
       tooltip.textContent = hover.name + ' · ' + hover.parse;
       tooltip.style.display = 'block';
-      tooltip.style.left = (canvas.offsetLeft + hover.x) + 'px';
-      tooltip.style.top = (canvas.offsetTop + hover.y - hover.r - 34) + 'px';
+      tooltip.style.left = (canvas.offsetLeft + b.x) + 'px';
+      tooltip.style.top = (canvas.offsetTop + b.y - b.r - 34) + 'px';
       tooltip.style.transform = 'translateX(-50%)';
     } else {
       tooltip.style.display = 'none';
@@ -542,14 +553,16 @@ export function initField(canvas: HTMLCanvasElement): FieldHandle {
   // 2D fallback: full physics, deformed silhouette, texture clipped to the membrane.
   // Print doesn't crowd per-glyph here (uniform fill inside the deformed clip) — the
   // no-GL tier trades that fidelity for a single clip per bubble instead of 640.
-  function draw2D(hover: FieldBlob | null): void {
+  function draw2D(hover: Community | null): void {
     if (!c2d) return;   // renderer unavailable: skip the frame rather than throw
     c2d.setTransform(DPR, 0, 0, DPR, 0, 0);
     c2d.clearRect(0, 0, W, H);
-    for (const b of blobs) {
+    for (const c of communities) {
+      const b = c.blob;
+      if (!b) continue;
       const breathe = 1 + Math.sin(b.phase * 1.2) * 0.015;
       const base = b.r * breathe;
-      const tone = TONE[b.tone];
+      const tone = TONE[c.tone];
       const N = 64;
       let maxR = 0;
       const pts: [number, number][] = [];
@@ -579,7 +592,7 @@ export function initField(canvas: HTMLCanvasElement): FieldHandle {
         c2d.fillRect(b.x - maxR, b.y - maxR, maxR * 2, maxR * 2);
       }
       c2d.restore();
-      if (hover === b) {
+      if (hover === c) {
         c2d.beginPath();
         pts.forEach((p, i) => i === 0 ? c2d.moveTo(p[0], p[1]) : c2d.lineTo(p[0], p[1]));
         c2d.closePath();
@@ -594,12 +607,5 @@ export function initField(canvas: HTMLCanvasElement): FieldHandle {
   resize();
   requestAnimationFrame(step);
 
-  return {
-    setCommunities(source: Community[]): void {
-      communities = source.map((c) => ({
-        id: c.id, name: c.name, involvement: c.involvement, tone: c.tone, parse: c.parse,
-      }));
-      buildBlobs();
-    },
-  };
+  return { attach, detach, rebake };
 }

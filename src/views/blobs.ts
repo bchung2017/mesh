@@ -2,24 +2,23 @@ import type { Community } from '../types';
 import { TONE_HEX } from '../field/palette';
 import { byId } from '../dom';
 
-/** Controls the blobs view: feed it community data whenever it arrives. */
+/** Controls the blobs view: re-render the list after the store changes. */
 export interface BlobsHandle {
-  setCommunities(communities: Community[]): void;
+  render(): void;
 }
 
 /**
- * Boot the blobs list + detail sheet. Takes `show` from the tab bar so a clean
- * tap on a blob in the field can land on its full view here. All handlers are
- * wired immediately; call the returned `setCommunities` once data loads, so the
- * tab stays interactive even before (or without) the API.
+ * Boot the blobs list + detail sheet over the shared `communities` store. Takes
+ * `show` from the tab bar so a clean tap on a blob in the field can land on its
+ * full view here. All handlers are wired immediately; call the returned
+ * `render()` once data loads, so the tab stays interactive with or without the
+ * API.
  */
-export function initBlobs(show: (id: string) => void): BlobsHandle {
+export function initBlobs(show: (id: string) => void, communities: Community[]): BlobsHandle {
   const list = byId('blob-list');
   const countEl = byId('blob-count');
   const modal = byId('blob-modal');
   const sheet = byId('blob-sheet');
-
-  let communities: Community[] = [];
 
   function renderList(): void {
     countEl.textContent = communities.length + ' communities';
@@ -81,8 +80,7 @@ export function initBlobs(show: (id: string) => void): BlobsHandle {
   });
 
   return {
-    setCommunities(next: Community[]): void {
-      communities = next;
+    render(): void {
       renderList();
     },
   };
