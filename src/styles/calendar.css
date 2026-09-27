@@ -110,3 +110,34 @@
 }
 .tone-chip.on.warm{background:var(--salmon-soft);color:var(--coral)}
 .tone-chip.on.cool{background:var(--sky-soft);color:var(--sky)}
+
+/* ---- mobile layout ---- */
+@media (max-width: 600px){
+  .month-name{ font-size: 20px; }
+  .grid{ gap: 4px; }
+  .day{ min-height: 60px; padding: 6px 3px 5px; }
+}
+@media (max-width: 480px){
+  /* text takes the first line; time + add sit on the second */
+  .add-row{ flex-wrap: wrap; }
+  .add-row input[type=text]{ flex: 1 1 100%; }
+  .add-row input[type=time]{ flex: 1 1 auto; }
+  .add-row .btn{ flex: 0 0 auto; }
+}
+
+/* ---- touch targets (coarse pointers) ---- */
+@media (pointer: coarse){
+  .nav-btn{ width: 44px; height: 44px; }
+  .today-link{ padding: 8px 4px; }
+  .tone-chip{ padding: 9px 14px; }
+  .btn{ min-height: 44px; }
+  .close-x{ min-width: 44px; min-height: 44px; }
+  .event .x{ min-width: 40px; min-height: 40px; }
+}
+
+/* ---- neutralize sticky :hover lift on touch ---- */
+@media (hover: none){
+  .day:hover{ transform: none; }
+  .nav-btn:hover{ transform: none; }
+  .btn:hover{ transform: none; }
+}

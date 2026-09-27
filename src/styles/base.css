@@ -28,3 +28,24 @@ h1 .dot{color:var(--coral)}
 .tab:focus-visible{outline:2px solid var(--sky);outline-offset:2px}
 .view{display:none;flex-direction:column;gap:22px}
 .view.on{display:flex}
+
+/* ---- mobile layout ---- */
+@media (max-width: 600px){
+  body{
+    padding: 20px 14px calc(48px + env(safe-area-inset-bottom));
+    padding-left: max(14px, env(safe-area-inset-left));
+    padding-right: max(14px, env(safe-area-inset-right));
+  }
+  .wrap{ gap: 18px; }
+  .card{ padding: 18px; border-radius: 16px; }
+}
+
+/* ---- touch targets (coarse pointers) ---- */
+@media (pointer: coarse){
+  .tab{ min-height: 44px; }
+}
+
+/* ---- neutralize sticky :hover lift on touch ---- */
+@media (hover: none){
+  .tab:hover{ color: var(--ink-faint); }
+}

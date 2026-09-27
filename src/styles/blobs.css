@@ -68,3 +68,13 @@
   .blob-modal{padding:0}
   .blob-modal .sheet{max-width:none;height:100%;max-height:none;border-radius:0}
 }
+
+/* ---- touch targets (coarse pointers) ---- */
+@media (pointer: coarse){
+  .sheet-close{ min-width: 44px; min-height: 44px; }
+}
+
+/* ---- neutralize sticky :hover lift on touch ---- */
+@media (hover: none){
+  .blob-row:hover{ transform: none; }
+}
