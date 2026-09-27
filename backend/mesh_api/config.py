@@ -60,16 +60,26 @@ def postgres_engine_options(schema: str, environ=os.environ) -> dict:
 
 
 def resolve_config(instance_path: str, environ=os.environ) -> dict:
-    """Choose the backend by env: DATABASE_URL present → Postgres (schema
-    isolated), else a zero-config on-disk SQLite file."""
+    """Choose the backend by env: a Postgres DATABASE_URL → schema-isolated
+    Postgres; any other DATABASE_URL (e.g. an explicit ``sqlite:///`` path) is
+    used as-is; unset → a zero-config on-disk SQLite file."""
     raw = environ.get("DATABASE_URL")
     if raw:
-        schema = pg_schema(environ)
+        uri = normalize_database_url(raw)
+        if uri.startswith("postgresql"):
+            schema = pg_schema(environ)
+            return {
+                "backend": "postgres",
+                "uri": uri,
+                "schema": schema,
+                "engine_options": postgres_engine_options(schema, environ),
+            }
+        # a non-Postgres URL (SQLite, etc.): no schema isolation, no pg options
         return {
-            "backend": "postgres",
-            "uri": normalize_database_url(raw),
-            "schema": schema,
-            "engine_options": postgres_engine_options(schema, environ),
+            "backend": "sqlite" if uri.startswith("sqlite") else "other",
+            "uri": uri,
+            "schema": None,
+            "engine_options": {},
         }
     return {
         "backend": "sqlite",

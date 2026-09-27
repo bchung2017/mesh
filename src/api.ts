@@ -18,6 +18,16 @@ export function getCommunities(): Promise<CommunityData[]> {
   return fetch(`${BASE}/communities`).then((r) => asJson<CommunityData[]>(r));
 }
 
+/** Update a community's fields. The patch is CommunityData-shaped, so `blob`
+ *  can't be sent; the server also ignores any unknown keys. */
+export function updateCommunity(id: string, patch: Partial<CommunityData>): Promise<CommunityData> {
+  return fetch(`${BASE}/communities/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  }).then((r) => asJson<CommunityData>(r));
+}
+
 export function getEvents(): Promise<CalEvent[]> {
   return fetch(`${BASE}/events`).then((r) => asJson<CalEvent[]>(r));
 }

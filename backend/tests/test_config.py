@@ -83,6 +83,13 @@ class BackendSelection(unittest.TestCase):
         self.assertEqual(cfg["schema"], "mesh")
         self.assertEqual(cfg["engine_options"]["connect_args"]["options"], "-c search_path=mesh")
 
+    def test_explicit_sqlite_url_is_not_treated_as_postgres(self):
+        cfg = resolve_config("/tmp/inst", {"DATABASE_URL": "sqlite:////tmp/x.db"})
+        self.assertEqual(cfg["backend"], "sqlite")
+        self.assertEqual(cfg["uri"], "sqlite:////tmp/x.db")
+        self.assertIsNone(cfg["schema"])
+        self.assertEqual(cfg["engine_options"], {})
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -31,13 +31,36 @@ const { show } = initTabs();
 const blobs = initBlobs(show, communities);
 initNudges();
 
-getCommunities()
-  .then((data) => {
-    reconcile(communities, data, field);   // attaches a blob to each community
-    blobs.render();
-    statusReady();
-  })
-  .catch((err) => {
-    console.error('mesh: could not load communities', err);
-    statusError();
-  });
+let loaded = false;
+let inFlight = false;
+
+// Load (and later revalidate) community data: refetch, then reconcile into the
+// shared store in place — new communities attach, changed involvement/tone
+// rebake, departed ones detach, and every surviving blob keeps its position and
+// texture. Failures never blank a good UI.
+function load(): void {
+  if (inFlight) return;
+  inFlight = true;
+  getCommunities()
+    .then((data) => {
+      reconcile(communities, data, field);
+      blobs.render();
+      loaded = true;
+      statusReady();                 // also clears the error state on a recovered load
+    })
+    .catch((err) => {
+      console.error('mesh: could not load communities', err);
+      if (!loaded) statusError();    // keep the last good data on a failed revalidate
+    })
+    .finally(() => { inFlight = false; });
+}
+
+// Revalidate when the tab regains focus/visibility (SWR-style): picks up any
+// server-side change with blobs surviving, and recovers a first load that
+// failed on a cold start. No polling.
+window.addEventListener('focus', load);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') load();
+});
+
+load();
