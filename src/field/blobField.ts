@@ -51,6 +51,7 @@ export function initField(canvas: HTMLCanvasElement, communities: Community[]): 
     const maxInv = Math.max(...communities.map((c) => c.involvement));
     const s = radiusScale();
     const rMin = R_MIN * s, rMax = R_MAX * s;
+    if (maxInv <= 0) return rMin;   // no involvement signal (e.g. all zero): avoid 0/0 → NaN
     return rMin + (rMax - rMin) * Math.sqrt(inv / maxInv);
   }
 
