@@ -26,7 +26,7 @@ const communities: Community[] = [];
 statusLoading();
 
 const field = initField(byId<HTMLCanvasElement>('field'), communities);
-initCalendar(communities);
+const calendar = initCalendar(communities);
 const { show } = initTabs();
 const blobs = initBlobs(show, communities, field);
 initNudges();
@@ -45,6 +45,7 @@ function load(): void {
     .then((data) => {
       reconcile(communities, data, field);
       blobs.render();
+      calendar.refresh();            // recolor events now communities (tones + involvement) are loaded
       loaded = true;
       statusReady();                 // also clears the error state on a recovered load
     })

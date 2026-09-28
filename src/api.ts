@@ -56,7 +56,7 @@ export function createEvent(input: NewEvent): Promise<CalEvent> {
 }
 
 /** Update an event's fields and/or its community tags. */
-export function updateEvent(id: number, patch: Partial<Pick<CalEvent, 'name' | 'time' | 'tone' | 'communities'>>): Promise<CalEvent> {
+export function updateEvent(id: number, patch: Partial<Pick<CalEvent, 'name' | 'time' | 'communities'>>): Promise<CalEvent> {
   return fetch(`${BASE}/events/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },

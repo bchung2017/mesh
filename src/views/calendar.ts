@@ -1,31 +1,46 @@
-import type { CalEvent, Community, EventTone } from '../types';
+import type { CalEvent, Community } from '../types';
 import { byId } from '../dom';
 import { TONE_HEX } from '../field/palette';
 import { getEvents, createEvent, updateEvent, deleteEvent, getFeedEvents, type FeedEvent } from '../api';
 
 const MONTHS = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
-const NULL_COLOR = '#cfd6e4';   // untagged events: neutral "null" color
+const NULL_COLOR = '#cfd6e4';   // untagged / zero-involvement: neutral "null" color
+
+function hexToRgb(hex: string): [number, number, number] {
+  const h = hex.replace('#', '');
+  return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+}
+/** Mix `base` toward `grey` by t (t=1 → base, t=0 → grey). */
+function mixToward(base: string, grey: string, t: number): string {
+  const a = hexToRgb(base), b = hexToRgb(grey);
+  const k = Math.max(0, Math.min(1, t));
+  const c = a.map((v, i) => Math.round(v * k + b[i] * (1 - k)));
+  return `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
+}
 
 /** Boot the month calendar with its dynamically-placed day modal. The grid and
  *  all controls render immediately; events are loaded from (and persisted to)
  *  the API in the background, so the calendar works even if that load fails.
  *  `communities` (the shared store) drives event tag colors + the tag picker. */
-export function initCalendar(communities: Community[]): void {
+export function initCalendar(communities: Community[]): { refresh: () => void } {
   const key = (d: Date) => d.toISOString().slice(0, 10);
   const GAP = 8;          // breathing room between modal and selected row
   const MIN_H = 210;      // below this a region can't host the panel usefully
 
-  const toneOf = (id: string): string => {
-    const c = communities.find((x) => x.id === id);
-    return c ? TONE_HEX[c.tone] : NULL_COLOR;
+  // an event's color = its (first) tagged community's tone, its SATURATION set
+  // by that community's involvement (more involved → more vibrant; less → faded
+  // toward the null grey). Untagged events are the null color.
+  const eventColor = (ev: CalEvent): string => {
+    const id = ev.communities[0];
+    const c = id ? communities.find((x) => x.id === id) : undefined;
+    if (!c) return NULL_COLOR;
+    return mixToward(TONE_HEX[c.tone], NULL_COLOR, c.involvement / 100);
   };
-  const eventColor = (ev: CalEvent): string => (ev.communities[0] ? toneOf(ev.communities[0]) : NULL_COLOR);
 
   const now = new Date();
   const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   let view = new Date(now.getFullYear(), now.getMonth(), 1);
   let selected: Date | null = null;
-  let tone: EventTone = 'warm';
 
   // events, keyed by YYYY-MM-DD, hydrated from the API in the background (below)
   const events: Record<string, CalEvent[]> = {};
@@ -76,13 +91,13 @@ export function initCalendar(communities: Community[]): void {
   }
 
   function monthEventCount(): number {
-    let warm = 0;
+    let n = 0;
     for (const k in events) {
       const d = new Date(k + 'T00:00');
       if (d.getFullYear() === view.getFullYear() && d.getMonth() === view.getMonth())
-        warm += events[k].filter((e) => e.tone === 'warm').length;
+        n += events[k].length;
     }
-    return warm;
+    return n;
   }
 
   function render(): void {
@@ -90,10 +105,10 @@ export function initCalendar(communities: Community[]): void {
     // only own the subline while the calendar tab is showing (the tab bar owns
     // the home copy otherwise, and this render can resolve after tab setup)
     if (calTab.classList.contains('on')) {
-      const warm = monthEventCount();
-      subline.textContent = warm === 0 ? 'a quiet month so far'
-        : warm === 1 ? '1 gathering this month'
-        : warm + ' gatherings this month';
+      const n = monthEventCount();
+      subline.textContent = n === 0 ? 'a quiet month so far'
+        : n === 1 ? '1 event this month'
+        : n + ' events this month';
     }
 
     grid.innerHTML = '';
@@ -358,7 +373,7 @@ export function initCalendar(communities: Community[]): void {
     const btn = byId<HTMLButtonElement>('addBtn');
     btn.disabled = true;
     try {
-      const created = await createEvent({ date: k, time: t, name: n, tone });
+      const created = await createEvent({ date: k, time: t, name: n });
       (events[k] ??= []).push(created);
       nameEl.value = '';
       render(); renderPanel(); placeModal();
@@ -369,15 +384,6 @@ export function initCalendar(communities: Community[]): void {
       nameEl.focus();
     }
   }
-
-  document.querySelectorAll('.tone-chip').forEach((chip) => {
-    chip.addEventListener('click', (e) => {
-      e.stopPropagation();
-      tone = (chip as HTMLElement).dataset.tone as EventTone;
-      document.querySelectorAll('.tone-chip').forEach((c) =>
-        c.classList.toggle('on', c === chip));
-    });
-  });
 
   modal.addEventListener('click', (e) => e.stopPropagation());
   byId('closeBtn').addEventListener('click', closeModal);
@@ -424,4 +430,12 @@ export function initCalendar(communities: Community[]): void {
     })
     .catch((err) => console.error('mesh: could not load events', err));
   loadFeed();
+
+  // re-render when the shared community store changes (loaded/edited elsewhere)
+  // so event colors reflect current tags + involvement-driven saturation
+  function refresh(): void {
+    render();
+    if (selected && modal.classList.contains('open')) { renderPanel(); placeModal(); }
+  }
+  return { refresh };
 }

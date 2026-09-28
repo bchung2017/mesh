@@ -122,14 +122,6 @@
 }
 .btn:hover{transform:translateY(-1px)}
 .btn:focus-visible{outline:2px solid var(--coral);outline-offset:2px}
-.tone-toggle{display:flex;align-items:center;gap:6px;margin-top:10px}
-.tone-chip{
-  border:none;cursor:pointer;font-family:var(--sans);
-  font-size:11px;font-weight:600;padding:5px 12px;border-radius:999px;
-  background:var(--bg);color:var(--ink-faint);
-}
-.tone-chip.on.warm{background:var(--salmon-soft);color:var(--coral)}
-.tone-chip.on.cool{background:var(--sky-soft);color:var(--sky)}
 
 /* ---- mobile layout ---- */
 @media (max-width: 600px){
@@ -149,7 +141,6 @@
 @media (pointer: coarse){
   .nav-btn{ width: 44px; height: 44px; }
   .today-link{ padding: 8px 4px; }
-  .tone-chip{ padding: 9px 14px; }
   .btn{ min-height: 44px; }
   .close-x{ min-width: 44px; min-height: 44px; }
   .event .x{ min-width: 40px; min-height: 40px; }

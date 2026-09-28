@@ -64,6 +64,5 @@ class Event(db.Model):
             "date": self.date,
             "time": self.time,
             "name": self.name,
-            "tone": self.tone,
             "communities": [c.id for c in self.communities],
         }

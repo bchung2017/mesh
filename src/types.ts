@@ -50,7 +50,6 @@ export interface CalEvent {
   date: string;   // YYYY-MM-DD
   time: string;   // HH:MM
   name: string;
-  tone: EventTone;
   communities: string[];   // community ids this event is tagged with (empty = untagged)
 }
 
