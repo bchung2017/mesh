@@ -28,7 +28,7 @@ statusLoading();
 const field = initField(byId<HTMLCanvasElement>('field'), communities);
 initCalendar();
 const { show } = initTabs();
-const blobs = initBlobs(show, communities);
+const blobs = initBlobs(show, communities, field);
 initNudges();
 
 let loaded = false;

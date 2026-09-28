@@ -137,6 +137,10 @@ frontend TypeScript types.
 | -------- | ------------------ | ----------------------------------------- |
 | `GET`    | `/health`          | liveness + active backend/schema          |
 | `GET`    | `/communities`     | list communities (field + blobs data)     |
+| `POST`   | `/communities`     | create a community (server assigns id)    |
+| `GET`    | `/communities/:id` | read one community                        |
+| `PUT`    | `/communities/:id` | update a community's fields               |
+| `DELETE` | `/communities/:id` | delete a community                        |
 | `GET`    | `/events`          | list calendar events                      |
 | `POST`   | `/events`          | create an event `{date,time,name,tone}`   |
 | `DELETE` | `/events/:id`      | delete an event                           |

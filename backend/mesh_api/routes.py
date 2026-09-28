@@ -24,6 +24,38 @@ COMMUNITY_FIELDS = {
     "nextGathering": "next_gathering", "note": "note",
 }
 
+# Defaults for fields omitted on create.
+COMMUNITY_DEFAULTS = {
+    "tone": "sky", "parse": "new face", "parseState": "ok",
+    "involvement": 0, "delta": 0, "tenure": "new", "energy": "settling",
+    "lastArtifact": "none yet", "nextGathering": "nothing on the calendar", "note": "",
+}
+
+
+def _field_error(key: str, value) -> str | None:
+    """Validate a single community field value; return an error message or None."""
+    if key == "tone" and value not in COMMUNITY_TONES:
+        return f"tone must be one of {sorted(COMMUNITY_TONES)}"
+    if key == "parseState" and value not in PARSE_STATES:
+        return f"parseState must be one of {sorted(PARSE_STATES)}"
+    if key == "involvement" and not (isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 100):
+        return "involvement must be an integer 0–100"
+    if key == "delta" and not (isinstance(value, int) and not isinstance(value, bool)):
+        return "delta must be an integer"
+    return None
+
+
+def _generate_id(name: str) -> str:
+    """A short, unique, human-ish id from a name's initials (fits the id column)."""
+    words = re.findall(r"[A-Za-z0-9]+", name)
+    base = ("".join(w[0] for w in words)[:8] or "C").upper()
+    cand, n = base, 2
+    while db.session.get(Community, cand) is not None:
+        suffix = str(n)
+        cand = base[: 8 - len(suffix)] + suffix
+        n += 1
+    return cand
+
 
 @api.get("/health")
 def health():
@@ -40,6 +72,46 @@ def list_communities():
     return jsonify([c.to_dict() for c in rows])
 
 
+@api.get("/communities/<cid>")
+def get_community(cid: str):
+    community = db.session.get(Community, cid)
+    if community is None:
+        return jsonify({"error": "not found"}), 404
+    return jsonify(community.to_dict())
+
+
+@api.post("/communities")
+def create_community():
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "name is required"}), 400
+
+    # merge provided fields over defaults, validating each
+    values = dict(COMMUNITY_DEFAULTS)
+    for key in COMMUNITY_FIELDS:
+        if key == "name" or key not in data:
+            continue
+        err = _field_error(key, data[key])
+        if err:
+            return jsonify({"error": err}), 400
+        values[key] = data[key]
+
+    max_pos = db.session.query(db.func.max(Community.position)).scalar()
+    community = Community(
+        id=_generate_id(name),
+        name=name[:120],
+        tone=values["tone"], parse=values["parse"], parse_state=values["parseState"],
+        involvement=values["involvement"], delta=values["delta"], tenure=values["tenure"],
+        energy=values["energy"], last_artifact=values["lastArtifact"],
+        next_gathering=values["nextGathering"], note=values["note"],
+        position=(max_pos or 0) + 1,
+    )
+    db.session.add(community)
+    db.session.commit()
+    return jsonify(community.to_dict()), 201
+
+
 @api.put("/communities/<cid>")
 def update_community(cid: str):
     community = db.session.get(Community, cid)
@@ -51,18 +123,23 @@ def update_community(cid: str):
         attr = COMMUNITY_FIELDS.get(key)
         if attr is None:
             continue  # ignore unknown keys (including any client-side `blob`)
-        if key == "tone" and value not in COMMUNITY_TONES:
-            return jsonify({"error": f"tone must be one of {sorted(COMMUNITY_TONES)}"}), 400
-        if key == "parseState" and value not in PARSE_STATES:
-            return jsonify({"error": f"parseState must be one of {sorted(PARSE_STATES)}"}), 400
-        if key == "involvement" and not (isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 100):
-            return jsonify({"error": "involvement must be an integer 0–100"}), 400
-        if key == "delta" and not (isinstance(value, int) and not isinstance(value, bool)):
-            return jsonify({"error": "delta must be an integer"}), 400
+        err = _field_error(key, value)
+        if err:
+            return jsonify({"error": err}), 400
         setattr(community, attr, value)
 
     db.session.commit()
     return jsonify(community.to_dict())
+
+
+@api.delete("/communities/<cid>")
+def delete_community(cid: str):
+    community = db.session.get(Community, cid)
+    if community is None:
+        return jsonify({"error": "not found"}), 404
+    db.session.delete(community)
+    db.session.commit()
+    return "", 204
 
 
 @api.get("/events")

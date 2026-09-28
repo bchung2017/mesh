@@ -28,6 +28,21 @@ export function updateCommunity(id: string, patch: Partial<CommunityData>): Prom
   }).then((r) => asJson<CommunityData>(r));
 }
 
+/** Create a community. The server generates the id + ordering. */
+export function createCommunity(patch: Partial<CommunityData> & { name: string }): Promise<CommunityData> {
+  return fetch(`${BASE}/communities`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  }).then((r) => asJson<CommunityData>(r));
+}
+
+/** Delete a community. */
+export async function deleteCommunity(id: string): Promise<void> {
+  const res = await fetch(`${BASE}/communities/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error(`mesh api ${res.status} deleting community ${id}`);
+}
+
 export function getEvents(): Promise<CalEvent[]> {
   return fetch(`${BASE}/events`).then((r) => asJson<CalEvent[]>(r));
 }

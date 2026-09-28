@@ -35,3 +35,31 @@ export function reconcile(store: Community[], incoming: CommunityData[], field: 
   // attach any community still without a blob (the new ones), now that indices are final
   for (const c of store) if (!c.blob) field.attach(c);
 }
+
+/**
+ * Apply one created/updated community into the store in place. If it exists,
+ * its fields are overwritten (minus `blob`, which survives) and it rebakes when
+ * involvement or tone changed; otherwise it's added and a blob is attached.
+ * Returns the live Community in the store.
+ */
+export function applyUpsert(store: Community[], data: CommunityData, field: FieldHandle): Community {
+  const existing = store.find((c) => c.id === data.id);
+  if (existing) {
+    const changed = existing.involvement !== data.involvement || existing.tone !== data.tone;
+    Object.assign(existing, data);
+    if (changed) field.rebake(existing);
+    return existing;
+  }
+  const created: Community = { ...data, blob: null };
+  store.push(created);
+  field.attach(created);
+  return created;
+}
+
+/** Remove one community from the store in place, freeing its blob's texture. */
+export function applyRemove(store: Community[], id: string, field: FieldHandle): void {
+  const i = store.findIndex((c) => c.id === id);
+  if (i < 0) return;
+  field.detach(store[i]);
+  store.splice(i, 1);
+}
