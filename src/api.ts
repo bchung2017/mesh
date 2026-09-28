@@ -55,6 +55,20 @@ export function createEvent(input: NewEvent): Promise<CalEvent> {
   }).then((r) => asJson<CalEvent>(r));
 }
 
+/** Update an event's fields and/or its community tags. */
+export function updateEvent(id: number, patch: Partial<Pick<CalEvent, 'name' | 'time' | 'tone' | 'communities'>>): Promise<CalEvent> {
+  return fetch(`${BASE}/events/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  }).then((r) => asJson<CalEvent>(r));
+}
+
+/** The own calendar events tagged with a community. */
+export function getCommunityEvents(id: string): Promise<CalEvent[]> {
+  return fetch(`${BASE}/communities/${encodeURIComponent(id)}/events`).then((r) => asJson<CalEvent[]>(r));
+}
+
 export async function deleteEvent(id: number): Promise<void> {
   const res = await fetch(`${BASE}/events/${id}`, { method: 'DELETE' });
   if (!res.ok) throw new Error(`mesh api ${res.status} deleting event ${id}`);

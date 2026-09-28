@@ -81,6 +81,18 @@
   color:var(--ink-faint);background:rgba(27,42,74,0.06);
   padding:3px 8px;border-radius:999px;flex-shrink:0;
 }
+
+/* ---- event community tags ---- */
+.event-block{display:flex;flex-direction:column;gap:6px}
+.event-block .event{background:var(--bg)}   /* color now comes from the left accent + tags */
+.event-tags{display:flex;flex-wrap:wrap;gap:6px;padding:0 2px 2px}
+.tagchip{
+  border:1.5px solid rgba(27,42,74,0.14);background:var(--white);cursor:pointer;
+  font-family:var(--sans);font-size:11px;font-weight:600;color:var(--ink-dim);
+  padding:4px 10px;border-radius:999px;transition:transform .12s;
+}
+.tagchip:hover{transform:translateY(-1px)}
+.tagchip.on{border-color:transparent}
 .event .time{font-size:11px;font-weight:600;letter-spacing:0.12em;text-transform:uppercase;flex-shrink:0;width:54px}
 .event.warm .time{color:var(--coral)}
 .event.cool .time{color:var(--sky)}

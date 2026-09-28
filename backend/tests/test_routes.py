@@ -86,5 +86,44 @@ class CreateReadDeleteCommunity(unittest.TestCase):
         self.assertEqual(self.client.delete("/api/communities/MM").status_code, 404)  # already gone
 
 
+class EventTagging(unittest.TestCase):
+    def setUp(self):
+        self.client = make_client()
+
+    def _make(self, **extra):
+        body = {"date": "2026-03-10", "name": "sync", "time": "18:00", **extra}
+        return self.client.post("/api/events", json=body).get_json()
+
+    def test_create_with_tags(self):
+        ev = self._make(communities=["HW", "CL"])
+        self.assertEqual(set(ev["communities"]), {"HW", "CL"})
+
+    def test_untagged_is_empty(self):
+        self.assertEqual(self._make()["communities"], [])
+
+    def test_unknown_community_ignored(self):
+        ev = self._make(communities=["HW", "NOPE"])
+        self.assertEqual(ev["communities"], ["HW"])
+
+    def test_community_events_reverse_lookup(self):
+        ev = self._make(communities=["HW"])
+        rows = self.client.get("/api/communities/HW/events").get_json()
+        self.assertIn(ev["id"], [r["id"] for r in rows])
+        self.assertEqual(self.client.get("/api/communities/NOPE/events").status_code, 404)
+
+    def test_update_retags(self):
+        ev = self._make(communities=["HW"])
+        upd = self.client.put(f"/api/events/{ev['id']}", json={"communities": ["MG"]}).get_json()
+        self.assertEqual(upd["communities"], ["MG"])
+        self.assertNotIn(ev["id"], [r["id"] for r in self.client.get("/api/communities/HW/events").get_json()])
+        self.assertIn(ev["id"], [r["id"] for r in self.client.get("/api/communities/MG/events").get_json()])
+
+    def test_deleting_community_untags_event(self):
+        ev = self._make(communities=["HW", "CL"])
+        self.assertEqual(self.client.delete("/api/communities/CL").status_code, 204)
+        again = next(e for e in self.client.get("/api/events").get_json() if e["id"] == ev["id"])
+        self.assertEqual(again["communities"], ["HW"])
+
+
 if __name__ == "__main__":
     unittest.main()

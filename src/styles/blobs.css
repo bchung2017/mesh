@@ -63,6 +63,12 @@
 .sheet-line{font-size:14px;color:var(--ink);line-height:1.7}
 .sheet-line .dim{color:var(--ink-dim)}
 
+/* ---- tagged calendar events in a community's sheet ---- */
+.community-events{display:flex;flex-direction:column;gap:8px}
+.ce-row{display:flex;gap:12px;align-items:baseline;font-size:14px}
+.ce-row .ce-date{color:var(--ink-faint);font-size:12px;flex-shrink:0;min-width:104px}
+.ce-row .ce-name{color:var(--ink)}
+
 /* ---- blobs header: + new ---- */
 .head-right{display:flex;align-items:center;gap:12px}
 .new-blob-btn{

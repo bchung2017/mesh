@@ -141,8 +141,10 @@ frontend TypeScript types.
 | `GET`    | `/communities/:id` | read one community                        |
 | `PUT`    | `/communities/:id` | update a community's fields               |
 | `DELETE` | `/communities/:id` | delete a community                        |
+| `GET`    | `/communities/:id/events` | events tagged with this community  |
 | `GET`    | `/events`          | list calendar events                      |
-| `POST`   | `/events`          | create an event `{date,time,name,tone}`   |
+| `POST`   | `/events`          | create an event `{date,time,name,tone,communities?}` |
+| `PUT`    | `/events/:id`      | update an event / its community tags      |
 | `DELETE` | `/events/:id`      | delete an event                           |
 | `GET`    | `/ical/events`     | read-only events from the subscribed calendar feed |
 

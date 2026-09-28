@@ -2,7 +2,7 @@ import type { Community, CommunityData, Tone, ParseState } from '../types';
 import { TONE_HEX } from '../field/palette';
 import type { FieldHandle } from '../field/blobField';
 import { byId } from '../dom';
-import { createCommunity, updateCommunity, deleteCommunity } from '../api';
+import { createCommunity, updateCommunity, deleteCommunity, getCommunityEvents } from '../api';
 import { applyUpsert, applyRemove } from '../store';
 
 /** Controls the blobs view: re-render the list after the store changes. */
@@ -71,6 +71,7 @@ export function initBlobs(show: (id: string) => void, communities: Community[], 
       '<div class="sheet-section"><span class="label">last artifact</span><div class="sheet-line lastArtifact"></div></div>' +
       '<div class="sheet-section"><span class="label">next gathering</span><div class="sheet-line nextGathering"></div></div>' +
       '<div class="sheet-section"><span class="label">read</span><div class="sheet-line dim note"></div></div>' +
+      '<div class="sheet-section"><span class="label">on the calendar</span><div class="community-events"><div class="list-note">loading…</div></div></div>' +
       '<div class="sheet-actions">' +
         '<button class="btn-ghost" data-act="edit">edit</button>' +
         '<button class="btn-danger" data-act="delete">delete</button>' +
@@ -85,6 +86,34 @@ export function initBlobs(show: (id: string) => void, communities: Community[], 
     sheet.querySelector('[data-act="edit"]')!.addEventListener('click', () => openEditor(b));
     sheet.querySelector('[data-act="delete"]')!.addEventListener('click', () => removeBlob(b));
     modal.classList.add('open');
+    loadCommunityEvents(b.id);
+  }
+
+  // tagged calendar events for a community, rendered into its open detail sheet
+  function loadCommunityEvents(id: string): void {
+    getCommunityEvents(id)
+      .then((evts) => {
+        const box = sheet.querySelector('.community-events') as HTMLElement | null;
+        if (!box) return;   // sheet changed/closed while loading
+        box.innerHTML = '';
+        if (!evts.length) {
+          box.innerHTML = '<div class="list-note">no tagged events yet — tag events in the calendar.</div>';
+          return;
+        }
+        evts.forEach((ev) => {
+          const row = document.createElement('div');
+          row.className = 'ce-row';
+          row.innerHTML = '<span class="ce-date"></span><span class="ce-name"></span>';
+          (row.querySelector('.ce-date') as HTMLElement).textContent = ev.date + (ev.time ? ' · ' + ev.time : '');
+          (row.querySelector('.ce-name') as HTMLElement).textContent = ev.name;
+          box.appendChild(row);
+        });
+      })
+      .catch((err) => {
+        console.error('mesh: failed to load community events', err);
+        const box = sheet.querySelector('.community-events') as HTMLElement | null;
+        if (box) box.innerHTML = '<div class="list-note">couldn’t load events</div>';
+      });
   }
 
   // ---------------- editor (create / edit) ----------------

@@ -1,16 +1,25 @@
-import type { CalEvent, EventTone } from '../types';
+import type { CalEvent, Community, EventTone } from '../types';
 import { byId } from '../dom';
-import { getEvents, createEvent, deleteEvent, getFeedEvents, type FeedEvent } from '../api';
+import { TONE_HEX } from '../field/palette';
+import { getEvents, createEvent, updateEvent, deleteEvent, getFeedEvents, type FeedEvent } from '../api';
 
 const MONTHS = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+const NULL_COLOR = '#cfd6e4';   // untagged events: neutral "null" color
 
 /** Boot the month calendar with its dynamically-placed day modal. The grid and
  *  all controls render immediately; events are loaded from (and persisted to)
- *  the API in the background, so the calendar works even if that load fails. */
-export function initCalendar(): void {
+ *  the API in the background, so the calendar works even if that load fails.
+ *  `communities` (the shared store) drives event tag colors + the tag picker. */
+export function initCalendar(communities: Community[]): void {
   const key = (d: Date) => d.toISOString().slice(0, 10);
   const GAP = 8;          // breathing room between modal and selected row
   const MIN_H = 210;      // below this a region can't host the panel usefully
+
+  const toneOf = (id: string): string => {
+    const c = communities.find((x) => x.id === id);
+    return c ? TONE_HEX[c.tone] : NULL_COLOR;
+  };
+  const eventColor = (ev: CalEvent): string => (ev.communities[0] ? toneOf(ev.communities[0]) : NULL_COLOR);
 
   const now = new Date();
   const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -124,7 +133,8 @@ export function initCalendar(): void {
         const meshShown = Math.min(evs.length, 4);
         evs.slice(0, meshShown).forEach((e) => {
           const p = document.createElement('span');
-          p.className = 'pip ' + e.tone;
+          p.className = 'pip';
+          p.style.background = eventColor(e);   // tagged → community tone, untagged → null color
           pips.appendChild(p);
         });
         feed.slice(0, Math.max(0, 5 - meshShown)).forEach(() => {
@@ -265,8 +275,12 @@ export function initCalendar(): void {
       return;
     }
     evs.forEach((ev) => {
+      const block = document.createElement('div');
+      block.className = 'event-block';
+
       const row = document.createElement('div');
-      row.className = 'event ' + ev.tone;
+      row.className = 'event';
+      row.style.borderLeft = '3px solid ' + eventColor(ev);   // tag color, or null color
       row.innerHTML =
         '<span class="time">' + ev.time + '</span>' +
         '<span class="name"></span>' +
@@ -276,7 +290,24 @@ export function initCalendar(): void {
         e.stopPropagation();
         removeEvent(ev);
       });
-      eventList.appendChild(row);
+      block.appendChild(row);
+
+      // tag this event with one or more communities
+      if (communities.length) {
+        const tags = document.createElement('div');
+        tags.className = 'event-tags';
+        communities.forEach((c) => {
+          const on = ev.communities.includes(c.id);
+          const chip = document.createElement('button');
+          chip.className = 'tagchip' + (on ? ' on' : '');
+          chip.textContent = c.name;
+          if (on) { chip.style.background = TONE_HEX[c.tone]; chip.style.color = '#fff'; }
+          chip.addEventListener('click', (e) => { e.stopPropagation(); toggleTag(ev, c.id); });
+          tags.appendChild(chip);
+        });
+        block.appendChild(tags);
+      }
+      eventList.appendChild(block);
     });
     // read-only events from the subscribed calendar (no delete)
     feed.forEach((fe) => {
@@ -302,6 +333,15 @@ export function initCalendar(): void {
     }
     render(); renderPanel(); placeModal();
     deleteEvent(ev.id).catch((err) => console.error('mesh: failed to delete event', err));
+  }
+
+  function toggleTag(ev: CalEvent, communityId: string): void {
+    const next = ev.communities.includes(communityId)
+      ? ev.communities.filter((x) => x !== communityId)
+      : [...ev.communities, communityId];
+    ev.communities = next;   // optimistic; recolors the pip + chip immediately
+    render(); renderPanel(); placeModal();
+    updateEvent(ev.id, { communities: next }).catch((err) => console.error('mesh: failed to update tags', err));
   }
 
   byId('addBtn').addEventListener('click', addEvent);

@@ -2,6 +2,13 @@
 frontend's TypeScript types already expect, so the API shape matches 1:1."""
 from . import db
 
+# many-to-many: an event can be tagged with zero or more communities
+event_communities = db.Table(
+    "event_communities",
+    db.Column("event_id", db.Integer, db.ForeignKey("events.id", ondelete="CASCADE"), primary_key=True),
+    db.Column("community_id", db.String(8), db.ForeignKey("communities.id", ondelete="CASCADE"), primary_key=True),
+)
+
 
 class Community(db.Model):
     __tablename__ = "communities"
@@ -46,6 +53,11 @@ class Event(db.Model):
     name = db.Column(db.String(120), nullable=False)
     tone = db.Column(db.String(8), nullable=False, default="warm")
 
+    # communities this event is tagged with (empty = untagged / "null")
+    communities = db.relationship(
+        "Community", secondary=event_communities, backref="events", passive_deletes=True,
+    )
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -53,4 +65,5 @@ class Event(db.Model):
             "time": self.time,
             "name": self.name,
             "tone": self.tone,
+            "communities": [c.id for c in self.communities],
         }

@@ -59,6 +59,14 @@ def _generate_id(name: str) -> str:
     return cand
 
 
+def _resolve_communities(ids) -> list:
+    """Community rows for the given ids; unknown ids are silently dropped."""
+    if not isinstance(ids, list) or not ids:
+        return []
+    wanted = [str(i) for i in ids]
+    return Community.query.filter(Community.id.in_(wanted)).all()
+
+
 @api.get("/health")
 def health():
     return {
@@ -144,6 +152,16 @@ def delete_community(cid: str):
     return "", 204
 
 
+@api.get("/communities/<cid>/events")
+def community_events(cid: str):
+    """The (own) calendar events tagged with this community, date/time sorted."""
+    community = db.session.get(Community, cid)
+    if community is None:
+        return jsonify({"error": "not found"}), 404
+    rows = sorted(community.events, key=lambda e: (e.date, e.time))
+    return jsonify([e.to_dict() for e in rows])
+
+
 @api.get("/events")
 def list_events():
     rows = Event.query.order_by(Event.date, Event.time).all()
@@ -169,9 +187,39 @@ def create_event():
         return jsonify({"error": f"tone must be one of {sorted(TONES)}"}), 400
 
     event = Event(date=date, name=name[:120], time=time, tone=tone)
+    if "communities" in data:
+        event.communities = _resolve_communities(data.get("communities"))
     db.session.add(event)
     db.session.commit()
     return jsonify(event.to_dict()), 201
+
+
+@api.put("/events/<int:event_id>")
+def update_event(event_id: int):
+    event = db.session.get(Event, event_id)
+    if event is None:
+        return jsonify({"error": "not found"}), 404
+
+    data = request.get_json(silent=True) or {}
+    if "name" in data:
+        name = (data.get("name") or "").strip()
+        if not name:
+            return jsonify({"error": "name is required"}), 400
+        event.name = name[:120]
+    if "time" in data:
+        time = (data.get("time") or "").strip()
+        if not TIME_RE.match(time):
+            return jsonify({"error": "time must be HH:MM"}), 400
+        event.time = time
+    if "tone" in data:
+        if data["tone"] not in TONES:
+            return jsonify({"error": f"tone must be one of {sorted(TONES)}"}), 400
+        event.tone = data["tone"]
+    if "communities" in data:
+        event.communities = _resolve_communities(data.get("communities"))
+
+    db.session.commit()
+    return jsonify(event.to_dict())
 
 
 @api.delete("/events/<int:event_id>")

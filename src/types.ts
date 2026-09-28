@@ -51,7 +51,8 @@ export interface CalEvent {
   time: string;   // HH:MM
   name: string;
   tone: EventTone;
+  communities: string[];   // community ids this event is tagged with (empty = untagged)
 }
 
-/** Fields needed to create a new event (the server assigns id). */
-export type NewEvent = Omit<CalEvent, 'id'>;
+/** Fields needed to create a new event (the server assigns id; tags optional). */
+export type NewEvent = Omit<CalEvent, 'id' | 'communities'> & { communities?: string[] };
