@@ -40,9 +40,18 @@ export function initField(canvas: HTMLCanvasElement, communities: Community[]): 
 
   const SECTORS = 48, RINGS = 6;   // GPU renders this for free
 
+  // blob sizes are tuned for a ~desktop-width field; scale them down on narrow
+  // screens (with a floor) so a phone's field isn't a wall of overlapping blobs
+  const REF_W = 760;
+  function radiusScale(): number {
+    return Math.max(0.55, Math.min(1, (W || REF_W) / REF_W));
+  }
+
   function radiusFor(inv: number): number {
     const maxInv = Math.max(...communities.map((c) => c.involvement));
-    return R_MIN + (R_MAX - R_MIN) * Math.sqrt(inv / maxInv);
+    const s = radiusScale();
+    const rMin = R_MIN * s, rMax = R_MAX * s;
+    return rMin + (rMax - rMin) * Math.sqrt(inv / maxInv);
   }
 
   // ---------------- WebGL setup ----------------
@@ -169,14 +178,26 @@ export function initField(canvas: HTMLCanvasElement, communities: Community[]): 
   }
 
   let grace = 0;   // frames of gentled physics after the field becomes visible again
+  let rescaleTimer = 0;
   function resize(): void {
     const w = canvas.clientWidth, h = canvas.clientHeight;
     if (w === 0 || h === 0) return;      // hidden tab: keep last real dimensions, freeze world
-    DPR = window.devicePixelRatio || 1;
+    // cap DPR: a 3x retina phone would otherwise render a 9x-area buffer, which
+    // is pure fill-rate/battery cost the soft-body look doesn't need
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    const widthChanged = W !== undefined && w !== W;
     if (w !== W || h !== H) grace = 45;  // dimensions actually changed: settle gently
     W = w; H = h;
     canvas.width = W * DPR; canvas.height = H * DPR;
     if (gl) gl.viewport(0, 0, canvas.width, canvas.height);
+    // on a real width change (e.g. phone rotation) re-scale + re-bake blobs to
+    // the new width, debounced so a desktop resize-drag doesn't thrash the GPU
+    if (widthChanged) {
+      clearTimeout(rescaleTimer);
+      rescaleTimer = window.setTimeout(() => {
+        for (const c of communities) if (c.blob) rebake(c);
+      }, 200);
+    }
   }
 
   // ---------------- blob lifecycle (r + tex derived from community fields) ----------------

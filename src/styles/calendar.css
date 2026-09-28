@@ -141,3 +141,21 @@
   .nav-btn:hover{ transform: none; }
   .btn:hover{ transform: none; }
 }
+
+/* ---- day modal as a bottom sheet on mobile (placeModal() defers to this) ---- */
+@media (max-width: 600px){
+  .day-modal{
+    position: fixed;
+    left: 0; right: 0; bottom: 0; top: auto;
+    width: auto; height: auto; max-height: 82vh;
+    z-index: 30;
+    border-radius: 18px 18px 0 0;
+    padding-bottom: calc(18px + env(safe-area-inset-bottom));
+    box-shadow: 0 -8px 24px rgba(27,42,74,0.18);
+  }
+  .day-modal.open{ animation: sheet-up 320ms cubic-bezier(.22,1,.36,1); }
+}
+@keyframes sheet-up{
+  from{ transform: translateY(100%); }
+  to{ transform: translateY(0); }
+}

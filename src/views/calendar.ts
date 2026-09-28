@@ -158,6 +158,12 @@ export function initCalendar(): void {
   function placeModal(): void {
     const selCell = grid.querySelector('.day.selected');
     if (!selCell) return;
+    // on mobile the modal is a bottom sheet positioned by CSS — clear any
+    // desktop inline geometry and let the media query take over
+    if (window.matchMedia('(max-width: 600px)').matches) {
+      modal.style.cssText = '';
+      return;
+    }
     const cardRect = card.getBoundingClientRect();
     const gridRect = grid.getBoundingClientRect();
     const rows = rowGeometry();
