@@ -18,11 +18,11 @@ _TTL_SECONDS = 300           # Google's feed lags anyway; don't refetch per requ
 _FETCH_TIMEOUT = 10
 
 
-def fetch_ics(url: str) -> str:
-    """Fetch the iCal text, cached for a few minutes per URL."""
+def fetch_ics(url: str, force: bool = False) -> str:
+    """Fetch the iCal text, cached for a few minutes per URL (force to bypass)."""
     now = time.time()
     hit = _CACHE.get(url)
-    if hit and now - hit[1] < _TTL_SECONDS:
+    if hit and not force and now - hit[1] < _TTL_SECONDS:
         return hit[0]
     resp = requests.get(url, timeout=_FETCH_TIMEOUT)
     resp.raise_for_status()
@@ -57,9 +57,9 @@ def parse_events(ics_text: str, start: date, end: date) -> list[dict]:
     return out
 
 
-def get_feed_events(start: date, end: date) -> tuple[bool, list[dict]]:
+def get_feed_events(start: date, end: date, force: bool = False) -> tuple[bool, list[dict]]:
     """(configured, events). configured is False when MESH_ICS_URL is unset."""
     url = os.environ.get("MESH_ICS_URL")
     if not url:
         return False, []
-    return True, parse_events(fetch_ics(url), start, end)
+    return True, parse_events(fetch_ics(url, force=force), start, end)

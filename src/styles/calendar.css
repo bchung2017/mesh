@@ -9,6 +9,8 @@
 }
 .nav-btn:hover{transform:translateY(-1px)}
 .nav-btn:focus-visible{outline:2px solid var(--sky);outline-offset:2px}
+#refreshBtn{font-size:17px}
+#refreshBtn.spinning{animation:spin .7s linear infinite}
 .today-link{
   color:var(--coral);font-weight:600;font-size:14px;text-decoration:none;
   background:none;border:none;cursor:pointer;font-family:var(--sans);

@@ -81,8 +81,9 @@ export interface FeedEvent {
   name: string;
 }
 
-/** Fetch subscribed-calendar events in [timeMin, timeMax) (YYYY-MM-DD). */
-export function getFeedEvents(timeMin: string, timeMax: string): Promise<{ configured: boolean; events: FeedEvent[] }> {
-  const q = `?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}`;
+/** Fetch subscribed-calendar events in [timeMin, timeMax) (YYYY-MM-DD).
+ *  `fresh` bypasses the server's feed cache to re-pull from the source. */
+export function getFeedEvents(timeMin: string, timeMax: string, fresh = false): Promise<{ configured: boolean; events: FeedEvent[] }> {
+  const q = `?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}${fresh ? '&fresh=1' : ''}`;
   return fetch(`${BASE}/ical/events${q}`).then((r) => asJson<{ configured: boolean; events: FeedEvent[] }>(r));
 }

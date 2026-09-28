@@ -245,9 +245,10 @@ def ical_events():
     today = date.today()
     start = parse_day(request.args.get("timeMin", ""), date(today.year, today.month, 1))
     end = parse_day(request.args.get("timeMax", ""), start + timedelta(days=31))
+    force = request.args.get("fresh") in ("1", "true", "yes")
 
     try:
-        configured, events = get_feed_events(start, end)
+        configured, events = get_feed_events(start, end, force=force)
     except Exception:  # feed unreachable / unparseable — don't blank the calendar
         current_app.logger.warning("mesh: iCal feed fetch failed", exc_info=True)
         return jsonify({"error": "could not fetch calendar feed"}), 502

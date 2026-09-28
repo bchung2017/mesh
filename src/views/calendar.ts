@@ -60,9 +60,9 @@ export function initCalendar(communities: Community[]): { refresh: () => void } 
       fmt(new Date(view.getFullYear(), view.getMonth() + 1, 1)),
     ];
   }
-  function loadFeed(): void {
+  function loadFeed(force = false): Promise<void> {
     const [timeMin, timeMax] = monthBounds();
-    getFeedEvents(timeMin, timeMax)
+    return getFeedEvents(timeMin, timeMax, force)
       .then(({ events: feed }) => {
         for (const k in feedEvents) delete feedEvents[k];
         for (const fe of feed) (feedEvents[key(new Date(fe.date + 'T00:00'))] ??= []).push(fe);
@@ -416,6 +416,17 @@ export function initCalendar(communities: Community[]): { refresh: () => void } 
     selected = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     render(); openModal();
     if (changedMonth) loadFeed();
+  });
+
+  // manual force-refresh: revalidate communities (fires main's focus handler)
+  // and re-pull the calendar feed bypassing the server cache
+  byId('refreshBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const btn = byId('refreshBtn');
+    if (btn.classList.contains('spinning')) return;
+    btn.classList.add('spinning');
+    window.dispatchEvent(new Event('focus'));
+    loadFeed(true).finally(() => btn.classList.remove('spinning'));
   });
 
   render();
