@@ -144,6 +144,7 @@ frontend TypeScript types.
 | `GET`    | `/events`          | list calendar events                      |
 | `POST`   | `/events`          | create an event `{date,time,name,tone}`   |
 | `DELETE` | `/events/:id`      | delete an event                           |
+| `GET`    | `/ical/events`     | read-only events from the subscribed calendar feed |
 
 ## Layout
 

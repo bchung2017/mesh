@@ -1,9 +1,11 @@
 """HTTP routes for the mesh API, all under /api."""
 import re
+from datetime import date, timedelta
 
 from flask import Blueprint, current_app, jsonify, request
 
 from . import db
+from .ical import get_feed_events
 from .models import Community, Event
 
 api = Blueprint("api", __name__, url_prefix="/api")
@@ -180,3 +182,25 @@ def delete_event(event_id: int):
     db.session.delete(event)
     db.session.commit()
     return "", 204
+
+
+@api.get("/ical/events")
+def ical_events():
+    """Read-only events from the subscribed external calendar (MESH_ICS_URL),
+    within [timeMin, timeMax) (YYYY-MM-DD; defaults to ~the current month)."""
+    def parse_day(value: str, fallback: date) -> date:
+        try:
+            return date.fromisoformat(value)
+        except (TypeError, ValueError):
+            return fallback
+
+    today = date.today()
+    start = parse_day(request.args.get("timeMin", ""), date(today.year, today.month, 1))
+    end = parse_day(request.args.get("timeMax", ""), start + timedelta(days=31))
+
+    try:
+        configured, events = get_feed_events(start, end)
+    except Exception:  # feed unreachable / unparseable — don't blank the calendar
+        current_app.logger.warning("mesh: iCal feed fetch failed", exc_info=True)
+        return jsonify({"error": "could not fetch calendar feed"}), 502
+    return jsonify({"configured": configured, "events": events})

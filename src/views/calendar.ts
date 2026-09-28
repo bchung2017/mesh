@@ -1,6 +1,6 @@
 import type { CalEvent, EventTone } from '../types';
 import { byId } from '../dom';
-import { getEvents, createEvent, deleteEvent } from '../api';
+import { getEvents, createEvent, deleteEvent, getFeedEvents, type FeedEvent } from '../api';
 
 const MONTHS = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
 
@@ -23,6 +23,29 @@ export function initCalendar(): void {
   function ingest(list: CalEvent[]): void {
     for (const k in events) delete events[k];
     for (const ev of list) (events[ev.date] ??= []).push(ev);
+  }
+
+  // read-only events mirrored from the subscribed external calendar, keyed the
+  // same way as the day cells so lookups line up
+  const feedEvents: Record<string, FeedEvent[]> = {};
+  function monthBounds(): [string, string] {
+    const fmt = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    return [
+      fmt(new Date(view.getFullYear(), view.getMonth(), 1)),
+      fmt(new Date(view.getFullYear(), view.getMonth() + 1, 1)),
+    ];
+  }
+  function loadFeed(): void {
+    const [timeMin, timeMax] = monthBounds();
+    getFeedEvents(timeMin, timeMax)
+      .then(({ events: feed }) => {
+        for (const k in feedEvents) delete feedEvents[k];
+        for (const fe of feed) (feedEvents[key(new Date(fe.date + 'T00:00'))] ??= []).push(fe);
+        render();
+        if (selected && modal.classList.contains('open')) { renderPanel(); placeModal(); }
+      })
+      .catch((err) => console.error('mesh: could not load calendar feed', err));
   }
 
   const card = byId('calCard');
@@ -94,12 +117,19 @@ export function initCalendar(): void {
       }
 
       const evs = events[key(date)] || [];
-      if (evs.length) {
+      const feed = feedEvents[key(date)] || [];
+      if (evs.length || feed.length) {
         const pips = document.createElement('div');
         pips.className = 'pips';
-        evs.slice(0, 4).forEach((e) => {
+        const meshShown = Math.min(evs.length, 4);
+        evs.slice(0, meshShown).forEach((e) => {
           const p = document.createElement('span');
           p.className = 'pip ' + e.tone;
+          pips.appendChild(p);
+        });
+        feed.slice(0, Math.max(0, 5 - meshShown)).forEach(() => {
+          const p = document.createElement('span');
+          p.className = 'pip feed';
           pips.appendChild(p);
         });
         cell.appendChild(pips);
@@ -222,10 +252,12 @@ export function initCalendar(): void {
     if (!selected) return;
     panelDate.textContent = fmtDay(selected);
     const evs = (events[key(selected)] || []).slice().sort((a, b) => a.time.localeCompare(b.time));
-    panelCount.textContent = evs.length === 0 ? '' : evs.length === 1 ? '1 thing' : evs.length + ' things';
+    const feed = (feedEvents[key(selected)] || []).slice().sort((a, b) => a.time.localeCompare(b.time));
+    const total = evs.length + feed.length;
+    panelCount.textContent = total === 0 ? '' : total === 1 ? '1 thing' : total + ' things';
     eventList.innerHTML = '';
 
-    if (!evs.length) {
+    if (!total) {
       const e = document.createElement('div');
       e.className = 'empty';
       e.textContent = 'nothing here yet — a free day is a fine thing';
@@ -244,6 +276,18 @@ export function initCalendar(): void {
         e.stopPropagation();
         removeEvent(ev);
       });
+      eventList.appendChild(row);
+    });
+    // read-only events from the subscribed calendar (no delete)
+    feed.forEach((fe) => {
+      const row = document.createElement('div');
+      row.className = 'event feed';
+      row.innerHTML =
+        '<span class="time"></span>' +
+        '<span class="name"></span>' +
+        '<span class="feed-tag">calendar</span>';
+      row.querySelector('.time')!.textContent = fe.time || 'all day';
+      row.querySelector('.name')!.textContent = fe.name;
       eventList.appendChild(row);
     });
   }
@@ -311,22 +355,27 @@ export function initCalendar(): void {
     e.stopPropagation();
     view = new Date(view.getFullYear(), view.getMonth() - 1, 1);
     closeModal();
+    loadFeed();
   });
   byId('nextBtn').addEventListener('click', (e) => {
     e.stopPropagation();
     view = new Date(view.getFullYear(), view.getMonth() + 1, 1);
     closeModal();
+    loadFeed();
   });
   byId('todayBtn').addEventListener('click', (e) => {
     e.stopPropagation();
+    const changedMonth = view.getFullYear() !== now.getFullYear() || view.getMonth() !== now.getMonth();
     view = new Date(now.getFullYear(), now.getMonth(), 1);
     selected = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     render(); openModal();
+    if (changedMonth) loadFeed();
   });
 
   render();
 
-  // hydrate events in the background; the calendar is already interactive
+  // hydrate own events + the subscribed feed in the background; the calendar is
+  // already interactive
   getEvents()
     .then((list) => {
       ingest(list);
@@ -334,4 +383,5 @@ export function initCalendar(): void {
       if (selected && modal.classList.contains('open')) { renderPanel(); placeModal(); }
     })
     .catch((err) => console.error('mesh: could not load events', err));
+  loadFeed();
 }

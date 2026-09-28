@@ -43,6 +43,7 @@
 .pip{width:6px;height:6px;border-radius:999px}
 .pip.warm{background:var(--salmon)}
 .pip.cool{background:var(--sky)}
+.pip.feed{background:var(--ink-faint)}   /* subscribed calendar: neutral, not "yours" */
 
 /* ---- dynamic day modal ---- */
 .day-modal{
@@ -73,6 +74,13 @@
 }
 .event.warm{background:var(--salmon-soft)}
 .event.cool{background:var(--sky-soft)}
+.event.feed{background:var(--bg)}
+.event.feed .time{color:var(--ink-faint)}
+.event .feed-tag{
+  font-size:10px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;
+  color:var(--ink-faint);background:rgba(27,42,74,0.06);
+  padding:3px 8px;border-radius:999px;flex-shrink:0;
+}
 .event .time{font-size:11px;font-weight:600;letter-spacing:0.12em;text-transform:uppercase;flex-shrink:0;width:54px}
 .event.warm .time{color:var(--coral)}
 .event.cool .time{color:var(--sky)}

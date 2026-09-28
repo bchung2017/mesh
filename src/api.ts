@@ -59,3 +59,16 @@ export async function deleteEvent(id: number): Promise<void> {
   const res = await fetch(`${BASE}/events/${id}`, { method: 'DELETE' });
   if (!res.ok) throw new Error(`mesh api ${res.status} deleting event ${id}`);
 }
+
+/** A read-only event mirrored from the subscribed external calendar. */
+export interface FeedEvent {
+  date: string;   // YYYY-MM-DD
+  time: string;   // HH:MM, or '' for all-day
+  name: string;
+}
+
+/** Fetch subscribed-calendar events in [timeMin, timeMax) (YYYY-MM-DD). */
+export function getFeedEvents(timeMin: string, timeMax: string): Promise<{ configured: boolean; events: FeedEvent[] }> {
+  const q = `?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}`;
+  return fetch(`${BASE}/ical/events${q}`).then((r) => asJson<{ configured: boolean; events: FeedEvent[] }>(r));
+}

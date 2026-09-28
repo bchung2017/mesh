@@ -4,3 +4,6 @@ Flask-Cors==4.0.1
 python-dotenv==1.0.1
 psycopg[binary]>=3.1   # only used when DATABASE_URL points at Postgres
 gunicorn>=21.0         # prod WSGI server (optional in dev)
+requests>=2.31         # fetch the subscribed iCal feed
+icalendar>=5.0         # parse the .ics feed
+recurring-ical-events>=2.1   # expand RRULE recurrences within a window
