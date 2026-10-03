@@ -106,6 +106,31 @@
 .event .x:hover{color:var(--ink-dim)}
 .empty{font-size:13px;color:var(--ink-faint);margin-bottom:14px}
 
+/* ---- event mesh layer: note + "log a contribution" door ---- */
+.event-note{padding:0 2px}
+.event-note textarea{
+  width:100%;border:1.5px solid rgba(27,42,74,0.10);background:var(--white);border-radius:10px;
+  padding:7px 11px;font-family:var(--sans);font-size:13px;color:var(--ink);outline:none;
+  resize:vertical;min-height:34px;line-height:1.4;transition:border-color .15s;
+}
+.event-note textarea:focus{border-color:var(--sky)}
+.event-note textarea::placeholder{color:var(--ink-faint)}
+.event-log{display:flex;flex-wrap:wrap;align-items:center;gap:7px;padding:0 2px 2px}
+.event-log .log-lbl{font-size:11px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:var(--ink-faint)}
+.event-log .log-hint{font-size:11px;color:var(--ink-faint);font-style:italic}
+.log-chip{
+  border:none;cursor:pointer;font-family:var(--sans);font-size:11px;font-weight:700;
+  color:var(--sky);background:var(--sky-soft);padding:5px 11px;border-radius:999px;transition:transform .12s;
+}
+.log-chip:hover{transform:translateY(-1px)}
+.logged-flash{font-size:12px;font-weight:700;color:var(--ok);padding:2px 2px;animation:settle 400ms ease}
+.feed-block .feed-tag{align-self:center}
+
+@media (pointer: coarse){
+  .log-chip{ min-height: 40px; }
+  .tagchip{ min-height: 36px; }
+}
+
 .add-row{display:flex;gap:8px}
 .add-row input[type=text]{
   flex:1;min-width:0;border:none;background:var(--bg);border-radius:12px;

@@ -143,3 +143,78 @@
 @media (hover: none){
   .blob-row:hover{ transform: none; }
 }
+
+/* ---- mode palette (shared by presence mix, log rows, mode chips) ---- */
+.mode-built{--m:var(--sky)}
+.mode-organized{--m:var(--coral)}
+.mode-served{--m:var(--ok)}
+.mode-led{--m:var(--navy)}
+.mode-connected{--m:var(--warn)}
+
+/* ---- presence readout (derived) ---- */
+.presence-box .inv-bar span{background:var(--sky)}
+.presence-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.presence-energy{font-size:15px;font-weight:700;color:var(--navy);text-transform:capitalize}
+.presence-delta{font-size:12px;font-weight:600}
+.presence-sub{font-size:12px;color:var(--ink-dim);margin-top:2px}
+.presence-sub b{color:var(--navy);font-size:13px}
+.mode-mix{display:flex;height:7px;border-radius:999px;overflow:hidden;background:var(--bg);margin-top:10px}
+.mode-mix .mm-seg{height:100%;background:var(--m,var(--ink-faint))}
+.mode-legend{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:7px}
+.mm-key{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--ink-dim);text-transform:capitalize}
+.mm-dot{width:8px;height:8px;border-radius:999px;background:var(--m,var(--ink-faint));display:inline-block}
+
+/* ---- contribution log ---- */
+.log-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.log-head .label{margin-bottom:0}
+.btn-ghost.sm{padding:5px 12px;font-size:12px;border-radius:999px}
+.contrib-box{display:flex;flex-direction:column;gap:9px}
+.clog-row{background:var(--bg);border-radius:12px;padding:10px 13px}
+.clog-main{display:flex;align-items:baseline;gap:9px}
+.clog-mode{font-size:10px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;
+  color:#fff;background:var(--m,var(--ink-faint));padding:3px 8px;border-radius:999px;flex-shrink:0}
+.clog-mag{color:var(--ink-dim);font-weight:700;letter-spacing:1px;flex-shrink:0}
+.clog-text{font-size:14px;color:var(--ink);line-height:1.4}
+.clog-meta{display:flex;align-items:center;gap:10px;margin-top:6px;font-size:11px;color:var(--ink-faint)}
+.clog-meta .spacer{flex:1}
+.prov{font-weight:700;letter-spacing:0.04em;text-transform:uppercase;padding:2px 7px;border-radius:999px}
+.prov.linked{background:var(--sky-soft);color:var(--sky)}
+.prov.orphan{background:#fdf1de;color:var(--warn)}
+.linklike{background:none;border:none;cursor:pointer;font-family:var(--sans);font-size:11px;
+  font-weight:600;color:var(--ink-dim);padding:2px 2px}
+.linklike:hover{color:var(--ink)}
+.linklike.danger{color:#d94f42}
+
+/* ---- contribution logger form (shared: blob sheet + calendar) ---- */
+.contrib-form{display:flex;flex-direction:column;gap:12px;background:var(--bg);
+  border-radius:14px;padding:14px;margin-top:2px}
+.contrib-form textarea{
+  border:1.5px solid rgba(27,42,74,0.12);background:var(--white);border-radius:12px;
+  padding:10px 12px;font-family:var(--sans);font-size:14px;color:var(--ink);outline:none;
+  resize:vertical;min-height:42px;line-height:1.45;width:100%;transition:border-color .15s;
+}
+.contrib-form textarea:focus{border-color:var(--sky)}
+.mode-chips,.mag-chips{display:flex;flex-wrap:wrap;gap:6px}
+.mode-chip{border:1.5px solid rgba(27,42,74,0.14);background:var(--white);cursor:pointer;
+  font-family:var(--sans);font-size:11px;font-weight:600;color:var(--ink-dim);
+  padding:5px 11px;border-radius:999px;text-transform:lowercase;transition:transform .12s}
+.mode-chip:hover{transform:translateY(-1px)}
+.mode-chip.on{border-color:transparent;color:#fff;background:var(--m,var(--navy))}
+.mag-chip{border:1.5px solid rgba(27,42,74,0.14);background:var(--white);cursor:pointer;
+  font-size:15px;font-weight:700;color:var(--ink-dim);letter-spacing:1px;min-width:46px;
+  padding:4px 10px;border-radius:12px;transition:transform .12s}
+.mag-chip:hover{transform:translateY(-1px)}
+.mag-chip.on{border-color:transparent;background:var(--sky-soft);color:var(--sky)}
+.autofill{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-dim);cursor:pointer}
+.autofill input{accent-color:var(--sky);width:16px;height:16px}
+.llm-why{font-size:12px;color:var(--ink-dim);font-style:italic}
+.llm-why.err{color:var(--warn);font-style:normal}
+.contrib-error{color:#d94f42;font-size:13px;font-weight:600}
+.contrib-actions{display:flex;align-items:center;gap:10px}
+.contrib-actions .spacer{flex:1}
+
+@media (pointer: coarse){
+  .mode-chip,.mag-chip{ min-height: 40px; }
+  .linklike{ min-height: 36px; padding: 6px; }
+  .autofill input{ width: 20px; height: 20px; }
+}

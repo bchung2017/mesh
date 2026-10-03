@@ -2,8 +2,13 @@ import type { Community, CommunityData, Tone, ParseState } from '../types';
 import { TONE_HEX } from '../field/palette';
 import type { FieldHandle } from '../field/blobField';
 import { byId } from '../dom';
-import { createCommunity, updateCommunity, deleteCommunity, getCommunityEvents } from '../api';
+import {
+  createCommunity, updateCommunity, deleteCommunity, getCommunityEvents,
+  getPresence, getContributions, deleteContribution,
+} from '../api';
+import type { Contribution } from '../types';
 import { applyUpsert, applyRemove } from '../store';
+import { renderPresence, buildContribForm, magnitudeDots } from './contrib';
 
 /** Controls the blobs view: re-render the list after the store changes. */
 export interface BlobsHandle {
@@ -64,14 +69,19 @@ export function initBlobs(show: (id: string) => void, communities: Community[], 
         '<div class="inv-bar"><span style="width:' + b.involvement + '%;background:' + TONE_HEX[b.tone] + '"></span></div>' +
         '<div class="sheet-line"><b>' + b.involvement + '</b> <span style="color:' + deltaColor + ';font-weight:600;font-size:13px">' + deltaTxt + ' vs last month</span></div>' +
       '</div>' +
+      '<div class="sheet-section"><span class="label">presence · derived from your log</span>' +
+        '<div class="presence-box"><div class="list-note">loading…</div></div></div>' +
       '<div class="statgrid">' +
-        '<div class="stat"><div class="num"></div><div class="sub2">in this blob</div></div>' +
-        '<div class="stat"><div class="num sky"></div><div class="sub2">energy</div></div>' +
+        '<div class="stat"><div class="num"></div><div class="sub2">tenure</div></div>' +
+        '<div class="stat"><div class="num sky"></div><div class="sub2">read</div></div>' +
       '</div>' +
       '<div class="sheet-section"><span class="label">last artifact</span><div class="sheet-line lastArtifact"></div></div>' +
       '<div class="sheet-section"><span class="label">next gathering</span><div class="sheet-line nextGathering"></div></div>' +
       '<div class="sheet-section"><span class="label">read</span><div class="sheet-line dim note"></div></div>' +
       '<div class="sheet-section"><span class="label">on the calendar</span><div class="community-events"><div class="list-note">loading…</div></div></div>' +
+      '<div class="sheet-section"><div class="log-head"><span class="label">contribution log</span>' +
+        '<button class="btn-ghost sm" data-act="log">+ log</button></div>' +
+        '<div class="contrib-box"><div class="list-note">loading…</div></div></div>' +
       '<div class="sheet-actions">' +
         '<button class="btn-ghost" data-act="edit">edit</button>' +
         '<button class="btn-danger" data-act="delete">delete</button>' +
@@ -85,8 +95,85 @@ export function initBlobs(show: (id: string) => void, communities: Community[], 
     sheet.querySelector('.sheet-close')!.addEventListener('click', closeModal);
     sheet.querySelector('[data-act="edit"]')!.addEventListener('click', () => openEditor(b));
     sheet.querySelector('[data-act="delete"]')!.addEventListener('click', () => removeBlob(b));
+    sheet.querySelector('[data-act="log"]')!.addEventListener('click', () => openLogForm(b.id));
     modal.classList.add('open');
     loadCommunityEvents(b.id);
+    loadPresence(b.id);
+    loadLog(b.id);
+  }
+
+  // ---------------- presence (derived) + contribution log ----------------
+  function loadPresence(id: string): void {
+    getPresence(id)
+      .then((p) => {
+        const box = sheet.querySelector('.presence-box') as HTMLElement | null;
+        if (box) renderPresence(box, p);
+      })
+      .catch((err) => {
+        console.error('mesh: failed to load presence', err);
+        const box = sheet.querySelector('.presence-box') as HTMLElement | null;
+        if (box) box.innerHTML = '<div class="list-note">couldn’t load presence</div>';
+      });
+  }
+
+  function loadLog(id: string): void {
+    getContributions(id)
+      .then((rows) => renderLog(id, rows))
+      .catch((err) => {
+        console.error('mesh: failed to load contributions', err);
+        const box = sheet.querySelector('.contrib-box') as HTMLElement | null;
+        if (box) box.innerHTML = '<div class="list-note">couldn’t load the log</div>';
+      });
+  }
+
+  function renderLog(id: string, rows: Contribution[]): void {
+    const box = sheet.querySelector('.contrib-box') as HTMLElement | null;
+    if (!box) return;
+    box.innerHTML = '';
+    if (!rows.length) {
+      box.innerHTML = '<div class="list-note">nothing logged — “+ log” what you’ve done here.</div>';
+      return;
+    }
+    rows.forEach((c) => {
+      const row = document.createElement('div');
+      row.className = 'clog-row';
+      const prov = c.orphaned ? '<span class="prov orphan" title="its calendar event was deleted">unlinked</span>'
+        : c.eventId != null ? '<span class="prov linked" title="' + (c.sourceEventLabel || 'from an event') + '">event</span>'
+        : '';
+      row.innerHTML =
+        '<div class="clog-main">' +
+          '<span class="clog-mode mode-' + c.mode + '">' + c.mode + '</span>' +
+          '<span class="clog-mag" title="magnitude">' + magnitudeDots(c.weight) + '</span>' +
+          '<span class="clog-text"></span>' +
+        '</div>' +
+        '<div class="clog-meta"><span class="clog-date">' + c.date + '</span>' + prov +
+          '<span class="spacer"></span>' +
+          '<button class="linklike" data-act="edit">edit</button>' +
+          '<button class="linklike danger" data-act="del">delete</button></div>';
+      (row.querySelector('.clog-text') as HTMLElement).textContent = c.text;
+      row.querySelector('[data-act="edit"]')!.addEventListener('click', () => openLogForm(id, c));
+      row.querySelector('[data-act="del"]')!.addEventListener('click', () => {
+        if (!window.confirm('Delete this contribution?')) return;
+        deleteContribution(c.id)
+          .then(() => { loadLog(id); loadPresence(id); })
+          .catch((err) => console.error('mesh: failed to delete contribution', err));
+      });
+      box.appendChild(row);
+    });
+  }
+
+  function openLogForm(id: string, existing?: Contribution): void {
+    const box = sheet.querySelector('.contrib-box') as HTMLElement | null;
+    if (!box) return;
+    box.innerHTML = '';
+    const form = buildContribForm({
+      communityId: id,
+      existing,
+      onSaved: () => { loadLog(id); loadPresence(id); },
+      onCancel: () => loadLog(id),
+    });
+    box.appendChild(form);
+    (form.querySelector('[name="text"]') as HTMLTextAreaElement).focus();
   }
 
   // tagged calendar events for a community, rendered into its open detail sheet

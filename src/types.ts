@@ -44,14 +44,72 @@ export interface Community {
 /** The serialized shape the API sends/receives — a Community without its blob. */
 export type CommunityData = Omit<Community, 'blob'>;
 
-/** A single dated thing on the calendar, as stored by the API. */
+/** A single dated thing on the calendar, as stored by the API.
+ *  Two layers (see docs/presence-model.md): the source fields (date/time/name/
+ *  location) come from where it was born — typed in mesh or mirrored from the
+ *  iCal feed — and `note`/`communities` are the mesh annotation layer. */
 export interface CalEvent {
   id: number;
+  source: 'mesh' | 'ical';
+  uid: string | null;
+  seriesUid: string | null;
   date: string;   // YYYY-MM-DD
-  time: string;   // HH:MM
+  time: string;   // HH:MM ('' = all-day)
   name: string;
-  communities: string[];   // community ids this event is tagged with (empty = untagged)
+  location: string | null;
+  sourceDescription: string | null;
+  note: string | null;              // mesh layer: the real who/why
+  communities: string[];            // community ids this event is tagged with (empty = untagged)
 }
 
-/** Fields needed to create a new event (the server assigns id; tags optional). */
-export type NewEvent = Omit<CalEvent, 'id' | 'communities'> & { communities?: string[] };
+/** Fields needed to create a new (mesh-native) event. */
+export interface NewEvent {
+  date: string;
+  time: string;
+  name: string;
+  note?: string;
+  communities?: string[];
+}
+
+/** The five contribution modes (kinds of involvement). */
+export type Mode = 'built' | 'organized' | 'served' | 'led' | 'connected';
+
+/** A dated thing you did for a community — the atom of presence. */
+export interface Contribution {
+  id: number;
+  communityId: string;
+  date: string;              // YYYY-MM-DD
+  text: string;
+  mode: Mode;
+  weight: number;            // 1..10 (shown abstracted as magnitude dots)
+  eventId: number | null;
+  sourceEventLabel: string | null;  // snapshot kept even if the event is deleted
+  orphaned: boolean;         // event_id null but label set → its event was deleted
+}
+
+/** Fields to create/update a contribution. */
+export interface ContributionInput {
+  date: string;
+  text: string;
+  mode?: Mode;
+  weight?: number;
+  eventId?: number;
+  sourceEventLabel?: string;
+}
+
+/** The derived read on a community, computed only from its contributions. */
+export interface Presence {
+  involvement: number;                 // 0..100, saturating
+  delta: number;                       // vs. a month ago
+  modeMix: Record<Mode, number>;       // each mode's % share
+  energy: string;                      // humming | warming | steady | cooling | quiet
+  contributionCount: number;
+  lastContribution: string | null;
+}
+
+/** The LLM's suggested classification for a contribution's free text. */
+export interface ClassifySuggestion {
+  mode: Mode;
+  weight: number;
+  rationale: string;
+}

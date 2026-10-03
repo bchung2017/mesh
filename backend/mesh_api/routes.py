@@ -4,7 +4,7 @@ from datetime import date, timedelta
 
 from flask import Blueprint, current_app, jsonify, request
 
-from . import db
+from . import db, llm
 from .ical import get_feed_events
 from .models import Community, Contribution, Event
 from .presence import MODES, compute_presence
@@ -273,9 +273,33 @@ def community_presence(cid: str):
     return jsonify(compute_presence(community.contributions))
 
 
+@api.post("/contributions/classify")
+def classify_contribution():
+    """Optional LLM autofill: suggest {mode, weight, rationale} from free text.
+
+    503 when no key is configured, 502 on any model/network failure — either way
+    the frontend keeps the manual chips, so this is never load-bearing. When the
+    contribution is being logged from an event, pass `eventContext` so the model
+    sees the who/what/where/when."""
+    if not llm.configured():
+        return jsonify({"error": "llm not configured"}), 503
+    data = request.get_json(silent=True) or {}
+    text = (data.get("text") or "").strip()
+    if not text:
+        return jsonify({"error": "text is required"}), 400
+    try:
+        return jsonify(llm.classify(text, (data.get("eventContext") or "").strip() or None))
+    except Exception:
+        current_app.logger.warning("mesh: contribution classify failed", exc_info=True)
+        return jsonify({"error": "could not classify"}), 502
+
+
 @api.get("/events")
 def list_events():
-    rows = Event.query.order_by(Event.date, Event.time).all()
+    # only mesh-native events; materialized iCal rows reach the calendar through
+    # the feed (GET /ical/events enriches each occurrence), so returning them
+    # here too would double-render them
+    rows = Event.query.filter_by(source="mesh").order_by(Event.date, Event.time).all()
     return jsonify([e.to_dict() for e in rows])
 
 
@@ -297,9 +321,49 @@ def create_event():
     if tone not in TONES:
         return jsonify({"error": f"tone must be one of {sorted(TONES)}"}), 400
 
-    event = Event(date=date, name=name[:120], time=time, tone=tone)
+    event = Event(source="mesh", date=date, name=name[:200], time=time, tone=tone)
+    if "note" in data:
+        event.note = (data.get("note") or "").strip() or None
     if "communities" in data:
         event.communities = _resolve_communities(data.get("communities"))
+    db.session.add(event)
+    db.session.commit()
+    return jsonify(event.to_dict()), 201
+
+
+@api.post("/events/materialize")
+def materialize_event():
+    """Persist a feed occurrence so its mesh layer (note/tags) has a home.
+
+    Idempotent on (source='ical', uid): first call creates the row from the
+    occurrence's source fields; later calls just return the existing row (its
+    mesh layer already lives on it). This is what the frontend hits the moment
+    you first annotate or log from a read-only calendar event.
+    """
+    data = request.get_json(silent=True) or {}
+    uid = (data.get("uid") or "").strip()
+    date = (data.get("date") or "").strip()
+    name = (data.get("name") or "").strip()
+    if not uid:
+        return jsonify({"error": "uid is required"}), 400
+    if not DATE_RE.match(date):
+        return jsonify({"error": "date must be YYYY-MM-DD"}), 400
+    if not name:
+        return jsonify({"error": "name is required"}), 400
+
+    existing = Event.query.filter_by(source="ical", uid=uid).first()
+    if existing is not None:
+        return jsonify(existing.to_dict())
+
+    time = (data.get("time") or "").strip()
+    if time and not TIME_RE.match(time):
+        return jsonify({"error": "time must be HH:MM"}), 400
+    event = Event(
+        source="ical", uid=uid,
+        series_uid=(data.get("seriesUid") or "").strip() or None,
+        date=date, time=time,
+    )
+    event.refresh_source(name, data.get("location"), data.get("description"))
     db.session.add(event)
     db.session.commit()
     return jsonify(event.to_dict()), 201
@@ -312,20 +376,31 @@ def update_event(event_id: int):
         return jsonify({"error": "not found"}), 404
 
     data = request.get_json(silent=True) or {}
-    if "name" in data:
+    # source-layer fields (name/time/date) are only hand-editable on mesh-native
+    # events; on a materialized iCal row they're owned by the feed and would be
+    # clobbered on the next refresh, so we ignore them there
+    if "name" in data and event.source == "mesh":
         name = (data.get("name") or "").strip()
         if not name:
             return jsonify({"error": "name is required"}), 400
-        event.name = name[:120]
-    if "time" in data:
+        event.name = name[:200]
+    if "date" in data and event.source == "mesh":
+        d = (data.get("date") or "").strip()
+        if not DATE_RE.match(d):
+            return jsonify({"error": "date must be YYYY-MM-DD"}), 400
+        event.date = d
+    if "time" in data and event.source == "mesh":
         time = (data.get("time") or "").strip()
-        if not TIME_RE.match(time):
+        if time and not TIME_RE.match(time):
             return jsonify({"error": "time must be HH:MM"}), 400
         event.time = time
     if "tone" in data:
         if data["tone"] not in TONES:
             return jsonify({"error": f"tone must be one of {sorted(TONES)}"}), 400
         event.tone = data["tone"]
+    # mesh-layer fields are editable on any event, feed or native
+    if "note" in data:
+        event.note = (data.get("note") or "").strip() or None
     if "communities" in data:
         event.communities = _resolve_communities(data.get("communities"))
 
@@ -367,4 +442,25 @@ def ical_events():
     except Exception:  # feed unreachable / unparseable — don't blank the calendar
         current_app.logger.warning("mesh: iCal feed fetch failed", exc_info=True)
         return jsonify({"error": "could not fetch calendar feed"}), 502
+
+    # fold the mesh layer onto any occurrence we've materialized: the feed owns
+    # the source fields (refresh them by uid), mesh owns note + tags (carry them
+    # out so the calendar can show annotations on feed events and route further
+    # edits to the existing row instead of making a second one)
+    if events:
+        by_uid = {
+            e.uid: e for e in Event.query.filter_by(source="ical").all() if e.uid
+        }
+        dirty = False
+        for occ in events:
+            row = by_uid.get(occ.get("uid"))
+            if row is None:
+                continue
+            row.refresh_source(occ["name"], occ.get("location"), occ.get("description"))
+            dirty = True
+            occ["meshId"] = row.id
+            occ["note"] = row.note
+            occ["communities"] = [c.id for c in row.communities]
+        if dirty:
+            db.session.commit()
     return jsonify({"configured": configured, "events": events})

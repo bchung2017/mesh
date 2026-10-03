@@ -66,6 +66,21 @@ class ParseEvents(unittest.TestCase):
         self.assertEqual([e["name"] for e in only], ["Standup"])
         self.assertEqual(only[0]["date"], "2026-01-12")
 
+    def test_series_uid_is_the_master_uid(self):
+        # every Standup occurrence shares one seriesUid (the series handle)...
+        series = {e["seriesUid"] for e in self.byname["Standup"]}
+        self.assertEqual(series, {"weekly-1"})
+
+    def test_occurrence_uid_is_unique_per_instance(self):
+        # ...but each occurrence gets its own uid, so one can be annotated alone
+        uids = [e["uid"] for e in self.byname["Standup"]]
+        self.assertEqual(len(uids), len(set(uids)))
+        self.assertEqual(self.byname["Standup"][0]["uid"].split("::")[0], "weekly-1")
+
+    def test_all_day_flag(self):
+        self.assertTrue(self.byname["Offsite"][0]["allDay"])
+        self.assertFalse(self.byname["Hardware meetup"][0]["allDay"])
+
 
 if __name__ == "__main__":
     unittest.main()

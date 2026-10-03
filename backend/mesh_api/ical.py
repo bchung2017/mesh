@@ -33,8 +33,18 @@ def fetch_ics(url: str, force: bool = False) -> str:
 def parse_events(ics_text: str, start: date, end: date) -> list[dict]:
     """Expand the feed's events between [start, end) and map to mesh's shape.
 
-    Pure (no network): given iCal text and a window, returns
-    [{date, time, name}] sorted by date then time. All-day events have time ''.
+    Pure (no network): given iCal text and a window, returns a list of
+    occurrences sorted by date then time, each carrying both the display fields
+    (date/time/name) and the identity + context the mesh layer needs to
+    materialize and annotate it:
+
+      seriesUid  the event's master UID — stable across every occurrence
+      uid        per-occurrence key (master UID + the occurrence's start), so a
+                 single instance of a recurring series can be annotated on its own
+      name/location/description   the source layer's what/where/why
+      allDay     True for date-only events (time is '')
+
+    All-day events have time ''.
     """
     cal = icalendar.Calendar.from_ical(ics_text)
     occurrences = recurring_ical_events.of(cal).between(start, end)
@@ -45,13 +55,22 @@ def parse_events(ics_text: str, start: date, end: date) -> list[dict]:
             continue
         dt = dtstart.dt
         if isinstance(dt, datetime):
-            day, tm = dt.date().isoformat(), dt.strftime("%H:%M")
+            day, tm, all_day = dt.date().isoformat(), dt.strftime("%H:%M"), False
         else:  # date -> all-day
-            day, tm = dt.isoformat(), ""
+            day, tm, all_day = dt.isoformat(), "", True
+
+        master = str(ev.get("UID", "")) or f"anon-{day}-{tm}"
+        location = ev.get("LOCATION")
+        description = ev.get("DESCRIPTION")
         out.append({
+            "seriesUid": master,
+            "uid": f"{master}::{day}{('T' + tm) if tm else ''}",
             "date": day,
             "time": tm,
+            "allDay": all_day,
             "name": str(ev.get("SUMMARY", "(busy)")),
+            "location": str(location) if location else None,
+            "description": str(description) if description else None,
         })
     out.sort(key=lambda e: (e["date"], e["time"]))
     return out

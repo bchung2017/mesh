@@ -1,4 +1,7 @@
-import type { CommunityData, CalEvent, NewEvent } from './types';
+import type {
+  CommunityData, CalEvent, NewEvent,
+  Contribution, ContributionInput, Presence, ClassifySuggestion,
+} from './types';
 
 // All requests go to the Flask API. In dev, Vite proxies /api to the backend
 // (see vite.config.ts); in production Flask serves this bundle and the API from
@@ -55,12 +58,25 @@ export function createEvent(input: NewEvent): Promise<CalEvent> {
   }).then((r) => asJson<CalEvent>(r));
 }
 
-/** Update an event's fields and/or its community tags. */
-export function updateEvent(id: number, patch: Partial<Pick<CalEvent, 'name' | 'time' | 'communities'>>): Promise<CalEvent> {
+/** Update an event's source fields (mesh-native only), note, and/or tags. */
+export function updateEvent(id: number, patch: Partial<Pick<CalEvent, 'name' | 'time' | 'date' | 'note' | 'communities'>>): Promise<CalEvent> {
   return fetch(`${BASE}/events/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(patch),
+  }).then((r) => asJson<CalEvent>(r));
+}
+
+/** Persist a feed occurrence so its mesh layer (note/tags) has a durable home.
+ *  Idempotent on uid — returns the existing row if already materialized. */
+export function materializeEvent(occ: {
+  uid: string; seriesUid?: string | null; date: string; time?: string;
+  name: string; location?: string | null; description?: string | null;
+}): Promise<CalEvent> {
+  return fetch(`${BASE}/events/materialize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(occ),
   }).then((r) => asJson<CalEvent>(r));
 }
 
@@ -74,11 +90,22 @@ export async function deleteEvent(id: number): Promise<void> {
   if (!res.ok) throw new Error(`mesh api ${res.status} deleting event ${id}`);
 }
 
-/** A read-only event mirrored from the subscribed external calendar. */
+/** An event mirrored from the subscribed external calendar. Carries the source
+ *  fields plus, once it's been annotated (materialized), its mesh layer:
+ *  `meshId` is the persisted event's id, and `note`/`communities` ride along. */
 export interface FeedEvent {
+  seriesUid: string;
+  uid: string;
   date: string;   // YYYY-MM-DD
   time: string;   // HH:MM, or '' for all-day
+  allDay: boolean;
   name: string;
+  location: string | null;
+  description: string | null;
+  // present only once materialized + annotated:
+  meshId?: number;
+  note?: string | null;
+  communities?: string[];
 }
 
 /** Fetch subscribed-calendar events in [timeMin, timeMax) (YYYY-MM-DD).
@@ -86,4 +113,54 @@ export interface FeedEvent {
 export function getFeedEvents(timeMin: string, timeMax: string, fresh = false): Promise<{ configured: boolean; events: FeedEvent[] }> {
   const q = `?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}${fresh ? '&fresh=1' : ''}`;
   return fetch(`${BASE}/ical/events${q}`).then((r) => asJson<{ configured: boolean; events: FeedEvent[] }>(r));
+}
+
+// ---------------- contributions + presence ----------------
+
+/** The derived presence read for a community (computed from its log). */
+export function getPresence(id: string): Promise<Presence> {
+  return fetch(`${BASE}/communities/${encodeURIComponent(id)}/presence`).then((r) => asJson<Presence>(r));
+}
+
+/** A community's contribution log, newest first. */
+export function getContributions(id: string): Promise<Contribution[]> {
+  return fetch(`${BASE}/communities/${encodeURIComponent(id)}/contributions`).then((r) => asJson<Contribution[]>(r));
+}
+
+export function createContribution(id: string, input: ContributionInput): Promise<Contribution> {
+  return fetch(`${BASE}/communities/${encodeURIComponent(id)}/contributions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  }).then((r) => asJson<Contribution>(r));
+}
+
+export function updateContribution(cid: number, patch: Partial<ContributionInput>): Promise<Contribution> {
+  return fetch(`${BASE}/contributions/${cid}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  }).then((r) => asJson<Contribution>(r));
+}
+
+export async function deleteContribution(cid: number): Promise<void> {
+  const res = await fetch(`${BASE}/contributions/${cid}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error(`mesh api ${res.status} deleting contribution ${cid}`);
+}
+
+/** Ask the backend's optional LLM to classify free text into mode + weight.
+ *  Resolves null when autofill isn't available (no key → 503, or any failure),
+ *  so callers fall back to manual entry without a hard error. */
+export async function classifyContribution(text: string, eventContext?: string): Promise<ClassifySuggestion | null> {
+  try {
+    const res = await fetch(`${BASE}/contributions/classify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, eventContext }),
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as ClassifySuggestion;
+  } catch {
+    return null;
+  }
 }

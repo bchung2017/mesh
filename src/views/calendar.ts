@@ -1,7 +1,8 @@
 import type { CalEvent, Community } from '../types';
 import { byId } from '../dom';
 import { TONE_HEX } from '../field/palette';
-import { getEvents, createEvent, updateEvent, deleteEvent, getFeedEvents, type FeedEvent } from '../api';
+import { getEvents, createEvent, updateEvent, deleteEvent, materializeEvent, getFeedEvents, type FeedEvent } from '../api';
+import { buildContribForm } from './contrib';
 
 const MONTHS = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
 const NULL_COLOR = '#cfd6e4';   // untagged / zero-involvement: neutral "null" color
@@ -30,8 +31,8 @@ export function initCalendar(communities: Community[]): { refresh: () => void } 
   // an event's color = its (first) tagged community's tone, its SATURATION set
   // by that community's involvement (more involved → more vibrant; less → faded
   // toward the null grey). Untagged events are the null color.
-  const eventColor = (ev: CalEvent): string => {
-    const id = ev.communities[0];
+  const colorForTags = (ids: string[]): string => {
+    const id = ids[0];
     const c = id ? communities.find((x) => x.id === id) : undefined;
     if (!c) return NULL_COLOR;
     return mixToward(TONE_HEX[c.tone], NULL_COLOR, c.involvement / 100);
@@ -149,7 +150,7 @@ export function initCalendar(communities: Community[]): { refresh: () => void } 
         evs.slice(0, meshShown).forEach((e) => {
           const p = document.createElement('span');
           p.className = 'pip';
-          p.style.background = eventColor(e);   // tagged → community tone, untagged → null color
+          p.style.background = colorForTags(e.communities);   // tagged → community tone, untagged → null color
           pips.appendChild(p);
         });
         feed.slice(0, Math.max(0, 5 - meshShown)).forEach(() => {
@@ -273,6 +274,56 @@ export function initCalendar(communities: Community[]): { refresh: () => void } 
     render();
   }
 
+  // A uniform annotation view over both event kinds. The source fields are
+  // read-only for feed events; the mesh layer (note + tags) is editable on both.
+  // A feed event has no mesh id until it's materialized — which happens lazily
+  // the first time you annotate or log from it (ensureId below).
+  interface Annotatable {
+    kind: 'mesh' | 'feed';
+    id: number | null;            // mesh event id; null for an un-materialized feed occurrence
+    date: string; time: string; name: string;
+    location: string | null;
+    note: string | null;
+    communities: string[];
+    raw: CalEvent | FeedEvent;    // the live object in the store/feed (we write back to it)
+  }
+
+  function asAnnotatable(ev: CalEvent): Annotatable {
+    return { kind: 'mesh', id: ev.id, date: ev.date, time: ev.time, name: ev.name,
+      location: ev.location, note: ev.note, communities: ev.communities, raw: ev };
+  }
+  function feedAnnotatable(fe: FeedEvent): Annotatable {
+    return { kind: 'feed', id: fe.meshId ?? null, date: fe.date, time: fe.time, name: fe.name,
+      location: fe.location, note: fe.note ?? null, communities: fe.communities ?? [], raw: fe };
+  }
+
+  // write the mesh layer back onto the underlying store/feed object so it
+  // survives re-renders within the session
+  function writeBack(a: Annotatable): void {
+    if (a.kind === 'mesh') {
+      const ev = a.raw as CalEvent; ev.communities = a.communities; ev.note = a.note;
+    } else {
+      const fe = a.raw as FeedEvent; fe.communities = a.communities; fe.note = a.note;
+      if (a.id != null) fe.meshId = a.id;
+    }
+  }
+
+  // ensure the occurrence is a persisted row and hand back its id (materializing
+  // a feed occurrence on first write — idempotent on the server by uid)
+  function ensureId(a: Annotatable): Promise<number> {
+    if (a.id != null) return Promise.resolve(a.id);
+    const fe = a.raw as FeedEvent;
+    return materializeEvent({
+      uid: fe.uid, seriesUid: fe.seriesUid, date: fe.date, time: fe.time,
+      name: fe.name, location: fe.location, description: fe.description,
+    }).then((ev) => { a.id = ev.id; fe.meshId = ev.id; return ev.id; });
+  }
+
+  // who/what/where/when, for the LLM when logging from this event
+  const contextOf = (a: Annotatable): string =>
+    [a.name, a.date + (a.time ? ' ' + a.time : ''), a.location ? 'at ' + a.location : '']
+      .filter(Boolean).join(' · ');
+
   function renderPanel(): void {
     if (!selected) return;
     panelDate.textContent = fmtDay(selected);
@@ -289,56 +340,78 @@ export function initCalendar(communities: Community[]): { refresh: () => void } 
       eventList.appendChild(e);
       return;
     }
-    evs.forEach((ev) => {
-      const block = document.createElement('div');
-      block.className = 'event-block';
-
-      const row = document.createElement('div');
-      row.className = 'event';
-      row.style.borderLeft = '3px solid ' + eventColor(ev);   // tag color, or null color
-      row.innerHTML =
-        '<span class="time">' + ev.time + '</span>' +
-        '<span class="name"></span>' +
-        '<button class="x" aria-label="remove">&#215;</button>';
-      row.querySelector('.name')!.textContent = ev.name;
-      row.querySelector('.x')!.addEventListener('click', (e) => {
-        e.stopPropagation();
-        removeEvent(ev);
-      });
-      block.appendChild(row);
-
-      // tag this event with one or more communities
-      if (communities.length) {
-        const tags = document.createElement('div');
-        tags.className = 'event-tags';
-        communities.forEach((c) => {
-          const on = ev.communities.includes(c.id);
-          const chip = document.createElement('button');
-          chip.className = 'tagchip' + (on ? ' on' : '');
-          chip.textContent = c.name;
-          if (on) { chip.style.background = TONE_HEX[c.tone]; chip.style.color = '#fff'; }
-          chip.addEventListener('click', (e) => { e.stopPropagation(); toggleTag(ev, c.id); });
-          tags.appendChild(chip);
-        });
-        block.appendChild(tags);
-      }
-      eventList.appendChild(block);
-    });
-    // read-only events from the subscribed calendar (no delete)
-    feed.forEach((fe) => {
-      const row = document.createElement('div');
-      row.className = 'event feed';
-      row.innerHTML =
-        '<span class="time"></span>' +
-        '<span class="name"></span>' +
-        '<span class="feed-tag">calendar</span>';
-      row.querySelector('.time')!.textContent = fe.time || 'all day';
-      row.querySelector('.name')!.textContent = fe.name;
-      eventList.appendChild(row);
-    });
+    evs.forEach((ev) => eventList.appendChild(eventBlock(asAnnotatable(ev))));
+    feed.forEach((fe) => eventList.appendChild(eventBlock(feedAnnotatable(fe))));
   }
 
-  function removeEvent(ev: CalEvent): void {
+  function eventBlock(a: Annotatable): HTMLElement {
+    const block = document.createElement('div');
+    block.className = 'event-block' + (a.kind === 'feed' ? ' feed-block' : '');
+
+    const row = document.createElement('div');
+    row.className = 'event' + (a.kind === 'feed' ? ' feed' : '');
+    row.style.borderLeft = '3px solid ' + colorForTags(a.communities);
+    row.innerHTML =
+      '<span class="time"></span><span class="name"></span>' +
+      (a.kind === 'mesh' ? '<button class="x" aria-label="remove">&#215;</button>'
+                         : '<span class="feed-tag">calendar</span>');
+    (row.querySelector('.time') as HTMLElement).textContent = a.time || 'all day';
+    (row.querySelector('.name') as HTMLElement).textContent = a.name;
+    if (a.kind === 'mesh') {
+      row.querySelector('.x')!.addEventListener('click', (e) => { e.stopPropagation(); removeMeshEvent(a.raw as CalEvent); });
+    }
+    block.appendChild(row);
+
+    // community tags (both kinds)
+    if (communities.length) {
+      const tags = document.createElement('div');
+      tags.className = 'event-tags';
+      communities.forEach((c) => {
+        const on = a.communities.includes(c.id);
+        const chip = document.createElement('button');
+        chip.className = 'tagchip' + (on ? ' on' : '');
+        chip.textContent = c.name;
+        if (on) { chip.style.background = TONE_HEX[c.tone]; chip.style.color = '#fff'; }
+        chip.addEventListener('click', (e) => { e.stopPropagation(); toggleTag(a, c.id); });
+        tags.appendChild(chip);
+      });
+      block.appendChild(tags);
+    }
+
+    // mesh-layer note (both kinds): the real who/why, and the LLM's best context
+    const noteWrap = document.createElement('div');
+    noteWrap.className = 'event-note';
+    const ta = document.createElement('textarea');
+    ta.rows = 1; ta.maxLength = 500;
+    ta.placeholder = 'note — who you met, why it mattered';
+    ta.value = a.note || '';
+    ta.addEventListener('click', (e) => e.stopPropagation());
+    ta.addEventListener('blur', () => saveNote(a, ta.value.trim()));
+    noteWrap.appendChild(ta);
+    block.appendChild(noteWrap);
+
+    // the "log a contribution" door — one button per tagged community (tag first,
+    // then log what you did for that community from this event)
+    const log = document.createElement('div');
+    log.className = 'event-log';
+    if (!a.communities.length) {
+      log.innerHTML = '<span class="log-hint">tag a community to log a contribution from this</span>';
+    } else {
+      const lbl = document.createElement('span'); lbl.className = 'log-lbl'; lbl.textContent = 'log →';
+      log.appendChild(lbl);
+      a.communities.forEach((cid) => {
+        const c = communities.find((x) => x.id === cid); if (!c) return;
+        const b = document.createElement('button');
+        b.className = 'log-chip'; b.textContent = c.name;
+        b.addEventListener('click', (e) => { e.stopPropagation(); openEventLogger(a, cid, block); });
+        log.appendChild(b);
+      });
+    }
+    block.appendChild(log);
+    return block;
+  }
+
+  function removeMeshEvent(ev: CalEvent): void {
     // optimistic: drop it locally, then tell the server
     const k = ev.date;
     const arr = events[k];
@@ -350,13 +423,50 @@ export function initCalendar(communities: Community[]): { refresh: () => void } 
     deleteEvent(ev.id).catch((err) => console.error('mesh: failed to delete event', err));
   }
 
-  function toggleTag(ev: CalEvent, communityId: string): void {
-    const next = ev.communities.includes(communityId)
-      ? ev.communities.filter((x) => x !== communityId)
-      : [...ev.communities, communityId];
-    ev.communities = next;   // optimistic; recolors the pip + chip immediately
-    render(); renderPanel(); placeModal();
-    updateEvent(ev.id, { communities: next }).catch((err) => console.error('mesh: failed to update tags', err));
+  function toggleTag(a: Annotatable, communityId: string): void {
+    a.communities = a.communities.includes(communityId)
+      ? a.communities.filter((x) => x !== communityId)
+      : [...a.communities, communityId];
+    writeBack(a);
+    // re-render the panel (tags + log door) and the month pips; state lives on raw
+    renderPanel(); render(); placeModal();
+    ensureId(a)
+      .then((id) => updateEvent(id, { communities: a.communities }))
+      .catch((err) => console.error('mesh: failed to update tags', err));
+  }
+
+  function saveNote(a: Annotatable, note: string): void {
+    if ((a.note || '') === note) return;
+    a.note = note || null;
+    writeBack(a);
+    ensureId(a)
+      .then((id) => updateEvent(id, { note }))
+      .catch((err) => console.error('mesh: failed to save note', err));
+  }
+
+  function openEventLogger(a: Annotatable, communityId: string, block: HTMLElement): void {
+    block.querySelector('.contrib-form')?.remove();
+    ensureId(a)
+      .then((id) => {
+        if (block.querySelector('.contrib-form')) return;   // double-click guard
+        const form = buildContribForm({
+          communityId, eventId: id, eventContext: contextOf(a), defaultDate: a.date,
+          onSaved: () => {
+            form.remove();
+            const ok = document.createElement('div');
+            ok.className = 'logged-flash'; ok.textContent = 'logged ✓';
+            block.appendChild(ok);
+            setTimeout(() => ok.remove(), 1800);
+            placeModal();
+          },
+          onCancel: () => { form.remove(); placeModal(); },
+        });
+        form.addEventListener('click', (e) => e.stopPropagation());
+        block.appendChild(form);
+        (form.querySelector('[name="text"]') as HTMLTextAreaElement).focus();
+        placeModal();
+      })
+      .catch((err) => console.error('mesh: could not open logger', err));
   }
 
   byId('addBtn').addEventListener('click', addEvent);

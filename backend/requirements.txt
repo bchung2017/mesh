@@ -7,3 +7,4 @@ gunicorn>=21.0         # prod WSGI server (optional in dev)
 requests>=2.31         # fetch the subscribed iCal feed
 icalendar>=5.0         # parse the .ics feed
 recurring-ical-events>=2.1   # expand RRULE recurrences within a window
+anthropic>=0.40   # optional LLM autofill for contributions (degrades if unset)

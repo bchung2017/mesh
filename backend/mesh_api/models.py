@@ -1,5 +1,7 @@
 """SQLAlchemy models for mesh. JSON serialization uses the camelCase keys the
 frontend's TypeScript types already expect, so the API shape matches 1:1."""
+from datetime import datetime, timezone
+
 from . import db
 
 # many-to-many: an event can be tagged with zero or more communities
@@ -51,25 +53,67 @@ class Community(db.Model):
 
 
 class Event(db.Model):
+    """A calendar thing, in two layers (see docs/presence-model.md):
+
+    - the *source layer* (name/when/where/why) comes from where the event was
+      born — typed in mesh, or mirrored from the subscribed iCal feed — and is
+      refreshed one-way from that origin;
+    - the *mesh layer* (note, community tags) is yours and survives every refresh.
+
+    iCal occurrences live only in the feed until you annotate one (tag/note) or
+    log a contribution from it — at that point it's *materialized* as a row here,
+    keyed by `uid`, so the annotation has something durable to hang on.
+    """
     __tablename__ = "events"
+    __table_args__ = (
+        # one materialized row per feed occurrence; mesh-native rows leave uid
+        # NULL, and NULLs are distinct, so this never constrains them
+        db.UniqueConstraint("source", "uid", name="uq_event_source_uid"),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
-    date = db.Column(db.String(10), nullable=False, index=True)  # YYYY-MM-DD
-    time = db.Column(db.String(5), nullable=False)               # HH:MM
-    name = db.Column(db.String(120), nullable=False)
+    source = db.Column(db.String(8), nullable=False, default="mesh")  # mesh | ical
+
+    # feed identity (null for mesh-native events)
+    uid = db.Column(db.String(255), index=True)         # per-occurrence key
+    series_uid = db.Column(db.String(255), index=True)  # groups a recurring series
+
+    # --- source layer (refreshed from the origin) ---
+    date = db.Column(db.String(10), nullable=False, index=True)  # YYYY-MM-DD (when)
+    time = db.Column(db.String(5), nullable=False)               # HH:MM, '' = all-day
+    name = db.Column(db.String(200), nullable=False)             # what
+    location = db.Column(db.String(200))                         # where
+    source_description = db.Column(db.Text)                      # why, as the feed gives it
+    source_synced_at = db.Column(db.DateTime)                    # last refresh from origin
     tone = db.Column(db.String(8), nullable=False, default="warm")
+
+    # --- mesh layer (yours; survives every feed refresh) ---
+    note = db.Column(db.Text)   # the real who/why — richest signal for the LLM
 
     # communities this event is tagged with (empty = untagged / "null")
     communities = db.relationship(
         "Community", secondary=event_communities, backref="events", passive_deletes=True,
     )
 
+    def refresh_source(self, name: str, location=None, description=None) -> None:
+        """Overwrite only the source layer from an origin pull; mesh layer intact."""
+        self.name = name[:200]
+        self.location = (location or None) and str(location)[:200]
+        self.source_description = (description or None) and str(description)
+        self.source_synced_at = datetime.now(timezone.utc)
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
+            "source": self.source,
+            "uid": self.uid,
+            "seriesUid": self.series_uid,
             "date": self.date,
             "time": self.time,
             "name": self.name,
+            "location": self.location,
+            "sourceDescription": self.source_description,
+            "note": self.note,
             "communities": [c.id for c in self.communities],
         }
 

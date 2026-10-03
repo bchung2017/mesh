@@ -179,5 +179,26 @@ LLM pre-fills from your free text, behind a user-facing on/off toggle.
 ## Build status
 
 - ✅ Contribution model + CRUD, Presence computation + endpoint (`/communities/:id/presence`).
-- ⏳ (this slice) Contribution ↔ Event link: `event_id`, `source_event_label`, orphan states, event-delete orphaning.
-- ⛔ Not yet: the Event two-layer rework + iCal materialization/annotation; the LLM classify endpoint; all frontend (contribution log UI, presence readout, autofill).
+- ✅ Contribution ↔ Event link: `event_id`, `source_event_label`, orphan states, event-delete orphaning.
+- ✅ Event two-layer model: `source` discriminator, `uid`/`series_uid`, source vs. mesh
+  layers, `refresh_source()`. iCal parse carries uid/seriesUid/location/description/allDay.
+- ✅ iCal lazy materialization (`POST /events/materialize`, idempotent on uid) +
+  reconcile: `GET /ical/events` refreshes materialized rows' source layer and folds
+  the mesh layer (note, tags, `meshId`) onto matching occurrences; `GET /events`
+  returns mesh-native rows only, so materialized feed events never double-render.
+- ✅ LLM classify endpoint (`POST /contributions/classify`, Claude Haiku 4.5) with
+  graceful degrade (503 no key / 502 failure → manual entry). `backend/mesh_api/llm.py`.
+- ✅ Frontend: per-community presence readout + contribution log CRUD (blob sheet);
+  calendar events (mesh **and** feed) are annotatable — tags, note, and a "log a
+  contribution" door, feed occurrences materializing on first write; shared logger
+  (`src/views/contrib.ts`) with the LLM autofill toggle and magnitude-dot weights.
+
+### Pragmatic deltas from the spec above
+
+- Event keeps `date`/`time`/`name` as its source fields rather than renaming to
+  `start`/`end`/`title` — the existing calendar depends on them, and `name` *is*
+  the title. `end`/`attendees`/`all_day` from the spec aren't stored (a personal
+  iCal feed rarely carries attendees; the UI never needed an end time).
+- The blob field + list still read the **stored** `involvement`; the sheet shows
+  derived **presence** alongside it. Making the field read derived involvement
+  (the "flip") is still deliberately deferred.
