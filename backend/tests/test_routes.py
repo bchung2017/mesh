@@ -125,5 +125,60 @@ class EventTagging(unittest.TestCase):
         self.assertEqual(again["communities"], ["HW"])
 
 
+class Contributions(unittest.TestCase):
+    def setUp(self):
+        self.client = make_client()
+
+    def _add(self, cid="HW", **extra):
+        body = {"date": "2026-09-01", "text": "shipped a thing", "mode": "built", "weight": 7, **extra}
+        return self.client.post(f"/api/communities/{cid}/contributions", json=body)
+
+    def test_create_and_list(self):
+        r = self._add()
+        self.assertEqual(r.status_code, 201)
+        self.assertEqual(r.get_json()["communityId"], "HW")
+        rows = self.client.get("/api/communities/HW/contributions").get_json()
+        self.assertEqual(len(rows), 1)
+
+    def test_defaults(self):
+        b = self.client.post("/api/communities/HW/contributions", json={"date": "2026-09-01", "text": "x"}).get_json()
+        self.assertEqual(b["mode"], "built")
+        self.assertEqual(b["weight"], 5)
+
+    def test_validation(self):
+        bad = [
+            {"text": "x", "date": "nope"},
+            {"date": "2026-09-01"},                                   # no text
+            {"date": "2026-09-01", "text": "x", "mode": "vibing"},
+            {"date": "2026-09-01", "text": "x", "weight": 99},
+        ]
+        for body in bad:
+            self.assertEqual(self.client.post("/api/communities/HW/contributions", json=body).status_code, 400)
+
+    def test_community_404(self):
+        self.assertEqual(self._add(cid="NOPE").status_code, 404)
+
+    def test_update_and_delete(self):
+        cid = self._add().get_json()["id"]
+        up = self.client.put(f"/api/contributions/{cid}", json={"mode": "led", "weight": 9})
+        self.assertEqual(up.status_code, 200)
+        self.assertEqual(up.get_json()["mode"], "led")
+        self.assertEqual(self.client.delete(f"/api/contributions/{cid}").status_code, 204)
+        self.assertEqual(self.client.delete(f"/api/contributions/{cid}").status_code, 404)
+
+    def test_standing_reflects_log(self):
+        from datetime import date
+        self.assertEqual(self.client.get("/api/communities/HW/standing").get_json()["involvement"], 0)
+        self._add(date=date.today().isoformat(), weight=10, mode="built")
+        s = self.client.get("/api/communities/HW/standing").get_json()
+        self.assertGreater(s["involvement"], 0)
+        self.assertEqual(s["modeMix"]["built"], 100)
+
+    def test_delete_community_cascades_contributions(self):
+        self._add(cid="MM")
+        self.assertEqual(self.client.delete("/api/communities/MM").status_code, 204)
+        self.assertEqual(self.client.get("/api/communities/MM/standing").status_code, 404)
+
+
 if __name__ == "__main__":
     unittest.main()

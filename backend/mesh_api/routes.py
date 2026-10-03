@@ -6,7 +6,8 @@ from flask import Blueprint, current_app, jsonify, request
 
 from . import db
 from .ical import get_feed_events
-from .models import Community, Event
+from .models import Community, Contribution, Event
+from .standing import MODES, compute_standing
 
 api = Blueprint("api", __name__, url_prefix="/api")
 
@@ -160,6 +161,93 @@ def community_events(cid: str):
         return jsonify({"error": "not found"}), 404
     rows = sorted(community.events, key=lambda e: (e.date, e.time))
     return jsonify([e.to_dict() for e in rows])
+
+
+def _contribution_error(data: dict, partial: bool = False) -> str | None:
+    """Validate a contribution payload. partial=True skips required-field checks."""
+    if not partial or "date" in data:
+        if not DATE_RE.match((data.get("date") or "").strip()):
+            return "date must be YYYY-MM-DD"
+    if not partial or "text" in data:
+        if not (data.get("text") or "").strip():
+            return "text is required"
+    if "mode" in data and data["mode"] not in MODES:
+        return f"mode must be one of {MODES}"
+    if "weight" in data:
+        w = data["weight"]
+        if not (isinstance(w, int) and not isinstance(w, bool) and 1 <= w <= 10):
+            return "weight must be an integer 1–10"
+    return None
+
+
+@api.get("/communities/<cid>/contributions")
+def list_contributions(cid: str):
+    community = db.session.get(Community, cid)
+    if community is None:
+        return jsonify({"error": "not found"}), 404
+    rows = sorted(community.contributions, key=lambda c: (c.date, c.id), reverse=True)
+    return jsonify([c.to_dict() for c in rows])
+
+
+@api.post("/communities/<cid>/contributions")
+def create_contribution(cid: str):
+    community = db.session.get(Community, cid)
+    if community is None:
+        return jsonify({"error": "not found"}), 404
+    data = request.get_json(silent=True) or {}
+    err = _contribution_error(data)
+    if err:
+        return jsonify({"error": err}), 400
+    c = Contribution(
+        community_id=cid,
+        date=data["date"].strip(),
+        text=data["text"].strip()[:280],
+        mode=data.get("mode", "built"),
+        weight=data.get("weight", 5),
+    )
+    db.session.add(c)
+    db.session.commit()
+    return jsonify(c.to_dict()), 201
+
+
+@api.put("/contributions/<int:contribution_id>")
+def update_contribution(contribution_id: int):
+    c = db.session.get(Contribution, contribution_id)
+    if c is None:
+        return jsonify({"error": "not found"}), 404
+    data = request.get_json(silent=True) or {}
+    err = _contribution_error(data, partial=True)
+    if err:
+        return jsonify({"error": err}), 400
+    if "date" in data:
+        c.date = data["date"].strip()
+    if "text" in data:
+        c.text = data["text"].strip()[:280]
+    if "mode" in data:
+        c.mode = data["mode"]
+    if "weight" in data:
+        c.weight = data["weight"]
+    db.session.commit()
+    return jsonify(c.to_dict())
+
+
+@api.delete("/contributions/<int:contribution_id>")
+def delete_contribution(contribution_id: int):
+    c = db.session.get(Contribution, contribution_id)
+    if c is None:
+        return jsonify({"error": "not found"}), 404
+    db.session.delete(c)
+    db.session.commit()
+    return "", 204
+
+
+@api.get("/communities/<cid>/standing")
+def community_standing(cid: str):
+    """Involvement derived from the contribution log (see standing.py)."""
+    community = db.session.get(Community, cid)
+    if community is None:
+        return jsonify({"error": "not found"}), 404
+    return jsonify(compute_standing(community.contributions))
 
 
 @api.get("/events")
