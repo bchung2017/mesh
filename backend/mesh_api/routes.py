@@ -198,12 +198,35 @@ def create_contribution(cid: str):
     err = _contribution_error(data)
     if err:
         return jsonify({"error": err}), 400
+
+    # optional link to the event that produced this contribution
+    event_id = data.get("eventId")
+    label = (data.get("sourceEventLabel") or "").strip() or None
+    if event_id is not None:
+        ev = db.session.get(Event, event_id)
+        if ev is None:
+            return jsonify({"error": "event not found"}), 400
+        if label is None:
+            label = f"{ev.date} · {ev.name}"[:200]   # snapshot a tombstone-able label
+        # one contribution per (event, community) — re-logging upserts
+        existing = Contribution.query.filter_by(community_id=cid, event_id=event_id).first()
+        if existing is not None:
+            existing.date = data["date"].strip()
+            existing.text = data["text"].strip()[:280]
+            existing.mode = data.get("mode", existing.mode)
+            existing.weight = data.get("weight", existing.weight)
+            existing.source_event_label = label
+            db.session.commit()
+            return jsonify(existing.to_dict())
+
     c = Contribution(
         community_id=cid,
         date=data["date"].strip(),
         text=data["text"].strip()[:280],
         mode=data.get("mode", "built"),
         weight=data.get("weight", 5),
+        event_id=event_id,
+        source_event_label=label,
     )
     db.session.add(c)
     db.session.commit()
@@ -315,6 +338,10 @@ def delete_event(event_id: int):
     event = db.session.get(Event, event_id)
     if event is None:
         return jsonify({"error": "not found"}), 404
+    # orphan any contributions this event produced — keep them + their label
+    # tombstone (explicit so it holds regardless of DB-level FK enforcement)
+    for c in Contribution.query.filter_by(event_id=event_id).all():
+        c.event_id = None
     db.session.delete(event)
     db.session.commit()
     return "", 204

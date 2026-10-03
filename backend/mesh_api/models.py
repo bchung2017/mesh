@@ -87,6 +87,12 @@ class Contribution(db.Model):
     mode = db.Column(db.String(16), nullable=False, default="built")  # built|organized|served|led|connected
     weight = db.Column(db.Integer, nullable=False, default=5)         # 1..10 impact/effort
 
+    # optional provenance: the event that produced this contribution
+    event_id = db.Column(
+        db.Integer, db.ForeignKey("events.id", ondelete="SET NULL"), nullable=True, index=True,
+    )
+    source_event_label = db.Column(db.String(200))   # snapshot at link time; survives event delete
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -95,4 +101,8 @@ class Contribution(db.Model):
             "text": self.text,
             "mode": self.mode,
             "weight": self.weight,
+            "eventId": self.event_id,
+            "sourceEventLabel": self.source_event_label,
+            # derived: no event but a label means the event was deleted (tombstone)
+            "orphaned": self.event_id is None and self.source_event_label is not None,
         }

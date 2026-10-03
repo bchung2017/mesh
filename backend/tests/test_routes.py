@@ -179,6 +179,43 @@ class Contributions(unittest.TestCase):
         self.assertEqual(self.client.delete("/api/communities/MM").status_code, 204)
         self.assertEqual(self.client.get("/api/communities/MM/presence").status_code, 404)
 
+    def _event(self):
+        return self.client.post("/api/events", json={"date": "2026-09-01", "name": "hardware meetup"}).get_json()
+
+    def test_standalone_contribution_not_orphaned(self):
+        c = self._add().get_json()
+        self.assertIsNone(c["eventId"])
+        self.assertIsNone(c["sourceEventLabel"])
+        self.assertFalse(c["orphaned"])
+
+    def test_link_to_event_snapshots_label(self):
+        ev = self._event()
+        c = self._add(eventId=ev["id"]).get_json()
+        self.assertEqual(c["eventId"], ev["id"])
+        self.assertEqual(c["sourceEventLabel"], "2026-09-01 · hardware meetup")
+        self.assertFalse(c["orphaned"])
+
+    def test_relog_same_event_community_upserts(self):
+        ev = self._event()
+        first = self._add(eventId=ev["id"], text="attended").get_json()
+        second = self._add(eventId=ev["id"], text="attended + demoed").get_json()
+        self.assertEqual(first["id"], second["id"])           # same row
+        self.assertEqual(second["text"], "attended + demoed")  # updated
+        rows = self.client.get("/api/communities/HW/contributions").get_json()
+        self.assertEqual(len([r for r in rows if r["eventId"] == ev["id"]]), 1)
+
+    def test_deleting_event_orphans_contribution(self):
+        ev = self._event()
+        self._add(eventId=ev["id"])
+        self.assertEqual(self.client.delete(f"/api/events/{ev['id']}").status_code, 204)
+        c = self.client.get("/api/communities/HW/contributions").get_json()[0]
+        self.assertIsNone(c["eventId"])
+        self.assertEqual(c["sourceEventLabel"], "2026-09-01 · hardware meetup")  # tombstone kept
+        self.assertTrue(c["orphaned"])
+
+    def test_link_to_missing_event_400(self):
+        self.assertEqual(self._add(eventId=999999).status_code, 400)
+
 
 if __name__ == "__main__":
     unittest.main()
