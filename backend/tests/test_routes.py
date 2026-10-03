@@ -25,14 +25,22 @@ class UpdateCommunity(unittest.TestCase):
         self.client = make_client()
 
     def test_updates_fields(self):
-        r = self.client.put("/api/communities/HW", json={"involvement": 40, "tone": "sky"})
+        r = self.client.put("/api/communities/HW", json={"tenure": "6 mo", "tone": "sky"})
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(r.get_json()["involvement"], 40)
+        self.assertEqual(r.get_json()["tenure"], "6 mo")
         self.assertEqual(r.get_json()["tone"], "sky")
         # persisted
         again = self.client.get("/api/communities").get_json()
         hw = next(c for c in again if c["id"] == "HW")
-        self.assertEqual(hw["involvement"], 40)
+        self.assertEqual(hw["tenure"], "6 mo")
+
+    def test_involvement_is_derived_not_settable(self):
+        # involvement/delta/energy are computed from the log — PUTting them is ignored
+        before = self.client.get("/api/communities/HW").get_json()["involvement"]
+        r = self.client.put("/api/communities/HW", json={"involvement": 3, "delta": 99, "energy": "blazing"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.get_json()["involvement"], before)   # unchanged
+        self.assertNotEqual(r.get_json()["energy"], "blazing")
 
     def test_ignores_unknown_keys_including_blob(self):
         r = self.client.put("/api/communities/HW", json={"blob": {"x": 1}, "bogus": 2, "note": "ok"})
@@ -45,7 +53,6 @@ class UpdateCommunity(unittest.TestCase):
 
     def test_bad_values_are_400(self):
         self.assertEqual(self.client.put("/api/communities/HW", json={"tone": "purple"}).status_code, 400)
-        self.assertEqual(self.client.put("/api/communities/HW", json={"involvement": 250}).status_code, 400)
         self.assertEqual(self.client.put("/api/communities/HW", json={"parseState": "meh"}).status_code, 400)
 
 
@@ -54,11 +61,12 @@ class CreateReadDeleteCommunity(unittest.TestCase):
         self.client = make_client()
 
     def test_create_generates_id_and_defaults(self):
-        r = self.client.post("/api/communities", json={"name": "Robotics League", "involvement": 30})
+        r = self.client.post("/api/communities", json={"name": "Robotics League"})
         self.assertEqual(r.status_code, 201)
         body = r.get_json()
         self.assertEqual(body["id"], "RL")            # initials
-        self.assertEqual(body["involvement"], 30)
+        self.assertEqual(body["involvement"], 0)       # derived: no log yet
+        self.assertEqual(body["energy"], "quiet")      # derived
         self.assertEqual(body["tone"], "sky")          # default
         self.assertEqual(body["parseState"], "ok")     # default
         # it shows up in the list
@@ -74,7 +82,8 @@ class CreateReadDeleteCommunity(unittest.TestCase):
     def test_create_requires_name_and_validates(self):
         self.assertEqual(self.client.post("/api/communities", json={}).status_code, 400)
         self.assertEqual(self.client.post("/api/communities", json={"name": "X", "tone": "gold"}).status_code, 400)
-        self.assertEqual(self.client.post("/api/communities", json={"name": "X", "involvement": -5}).status_code, 400)
+        # involvement isn't a settable field any more — it's silently ignored, not rejected
+        self.assertEqual(self.client.post("/api/communities", json={"name": "Ignore Me", "involvement": -5}).status_code, 201)
 
     def test_get_one(self):
         self.assertEqual(self.client.get("/api/communities/HW").get_json()["name"], "NYC Hardware")
@@ -129,20 +138,25 @@ class EventTagging(unittest.TestCase):
 class Contributions(unittest.TestCase):
     def setUp(self):
         self.client = make_client()
+        # a fresh community with an empty log, isolated from the seed data
+        self.cid = self.client.post("/api/communities", json={"name": "Log Test"}).get_json()["id"]
 
-    def _add(self, cid="HW", **extra):
+    def _add(self, cid=None, **extra):
         body = {"date": "2026-09-01", "text": "shipped a thing", "mode": "built", "weight": 7, **extra}
-        return self.client.post(f"/api/communities/{cid}/contributions", json=body)
+        return self.client.post(f"/api/communities/{cid or self.cid}/contributions", json=body)
+
+    def _list(self):
+        return self.client.get(f"/api/communities/{self.cid}/contributions").get_json()
 
     def test_create_and_list(self):
         r = self._add()
         self.assertEqual(r.status_code, 201)
-        self.assertEqual(r.get_json()["communityId"], "HW")
-        rows = self.client.get("/api/communities/HW/contributions").get_json()
-        self.assertEqual(len(rows), 1)
+        self.assertEqual(r.get_json()["communityId"], self.cid)
+        self.assertEqual(len(self._list()), 1)
 
     def test_defaults(self):
-        b = self.client.post("/api/communities/HW/contributions", json={"date": "2026-09-01", "text": "x"}).get_json()
+        b = self.client.post(f"/api/communities/{self.cid}/contributions",
+                             json={"date": "2026-09-01", "text": "x"}).get_json()
         self.assertEqual(b["mode"], "built")
         self.assertEqual(b["weight"], 5)
 
@@ -154,7 +168,7 @@ class Contributions(unittest.TestCase):
             {"date": "2026-09-01", "text": "x", "weight": 99},
         ]
         for body in bad:
-            self.assertEqual(self.client.post("/api/communities/HW/contributions", json=body).status_code, 400)
+            self.assertEqual(self.client.post(f"/api/communities/{self.cid}/contributions", json=body).status_code, 400)
 
     def test_community_404(self):
         self.assertEqual(self._add(cid="NOPE").status_code, 404)
@@ -169,11 +183,20 @@ class Contributions(unittest.TestCase):
 
     def test_presence_reflects_log(self):
         from datetime import date
-        self.assertEqual(self.client.get("/api/communities/HW/presence").get_json()["involvement"], 0)
+        self.assertEqual(self.client.get(f"/api/communities/{self.cid}/presence").get_json()["involvement"], 0)
         self._add(date=date.today().isoformat(), weight=10, mode="built")
-        s = self.client.get("/api/communities/HW/presence").get_json()
+        s = self.client.get(f"/api/communities/{self.cid}/presence").get_json()
         self.assertGreater(s["involvement"], 0)
         self.assertEqual(s["modeMix"]["built"], 100)
+
+    def test_community_involvement_is_derived_from_log(self):
+        # the flip: logging raises the community's involvement in its own payload
+        before = self.client.get(f"/api/communities/{self.cid}").get_json()["involvement"]
+        self.assertEqual(before, 0)
+        from datetime import date
+        self._add(date=date.today().isoformat(), weight=10, mode="built")
+        after = self.client.get(f"/api/communities/{self.cid}").get_json()["involvement"]
+        self.assertGreater(after, before)
 
     def test_delete_community_cascades_contributions(self):
         self._add(cid="MM")
@@ -202,14 +225,14 @@ class Contributions(unittest.TestCase):
         second = self._add(eventId=ev["id"], text="attended + demoed").get_json()
         self.assertEqual(first["id"], second["id"])           # same row
         self.assertEqual(second["text"], "attended + demoed")  # updated
-        rows = self.client.get("/api/communities/HW/contributions").get_json()
+        rows = self._list()
         self.assertEqual(len([r for r in rows if r["eventId"] == ev["id"]]), 1)
 
     def test_deleting_event_orphans_contribution(self):
         ev = self._event()
         self._add(eventId=ev["id"])
         self.assertEqual(self.client.delete(f"/api/events/{ev['id']}").status_code, 204)
-        c = self.client.get("/api/communities/HW/contributions").get_json()[0]
+        c = self._list()[0]
         self.assertIsNone(c["eventId"])
         self.assertEqual(c["sourceEventLabel"], "2026-09-01 · hardware meetup")  # tombstone kept
         self.assertTrue(c["orphaned"])

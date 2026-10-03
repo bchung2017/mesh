@@ -3,6 +3,7 @@ frontend's TypeScript types already expect, so the API shape matches 1:1."""
 from datetime import datetime, timezone
 
 from . import db
+from .presence import compute_presence
 
 # many-to-many: an event can be tagged with zero or more communities
 event_communities = db.Table(
@@ -17,38 +18,43 @@ class Community(db.Model):
 
     id = db.Column(db.String(8), primary_key=True)
     name = db.Column(db.String(120), nullable=False)
-    tone = db.Column(db.String(16), nullable=False)
-    parse = db.Column(db.String(120), nullable=False)
+    tone = db.Column(db.String(16), nullable=False)      # colour family (manual)
+    parse = db.Column(db.String(120), nullable=False)    # how you read them (manual)
     parse_state = db.Column(db.String(16), nullable=False, default="ok")
-    involvement = db.Column(db.Integer, nullable=False, default=0)
-    delta = db.Column(db.Integer, nullable=False, default=0)
-    tenure = db.Column(db.String(32))
-    energy = db.Column(db.String(32))
+    tenure = db.Column(db.String(32))                    # how long you've shown up (manual)
     last_artifact = db.Column(db.String(200))
     next_gathering = db.Column(db.String(200))
     note = db.Column(db.Text)
     position = db.Column(db.Integer, nullable=False, default=0)  # display order
 
-    # dated, typed log of what you've done for this community (drives Standing)
+    # dated, typed log of what you've done for this community — the ONLY source of
+    # involvement/delta/energy, which are derived from it, never stored or entered
     contributions = db.relationship(
         "Contribution", backref="community", cascade="all, delete-orphan",
         passive_deletes=True, order_by="Contribution.date",
     )
 
     def to_dict(self) -> dict:
+        # involvement/delta/energy/modeMix are the derived presence read — there is
+        # no stored involvement any more, so every surface reads the same number
+        p = compute_presence(self.contributions)
         return {
             "id": self.id,
             "name": self.name,
             "tone": self.tone,
             "parse": self.parse,
             "parseState": self.parse_state,
-            "involvement": self.involvement,
-            "delta": self.delta,
             "tenure": self.tenure,
-            "energy": self.energy,
             "lastArtifact": self.last_artifact,
             "nextGathering": self.next_gathering,
             "note": self.note,
+            # derived from the contribution log:
+            "involvement": p["involvement"],
+            "delta": p["delta"],
+            "energy": p["energy"],
+            "modeMix": p["modeMix"],
+            "contributionCount": p["contributionCount"],
+            "lastContribution": p["lastContribution"],
         }
 
 

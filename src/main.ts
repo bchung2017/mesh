@@ -64,4 +64,8 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') load();
 });
 
+// a contribution was logged/edited/deleted anywhere (blob sheet or calendar) →
+// involvement is derived, so re-reconcile to resize blobs + recolor pips live
+window.addEventListener('mesh:changed', load);
+
 load();

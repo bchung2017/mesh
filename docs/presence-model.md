@@ -193,12 +193,19 @@ LLM pre-fills from your free text, behind a user-facing on/off toggle.
   contribution" door, feed occurrences materializing on first write; shared logger
   (`src/views/contrib.ts`) with the LLM autofill toggle and magnitude-dot weights.
 
+- ✅ **The flip**: stored `involvement`/`delta`/`energy` are gone. `Community`
+  holds no involvement column; `Community.to_dict()` derives involvement, delta,
+  energy, and modeMix from the log via `compute_presence`, so every surface —
+  the blob's size, the list pill, the calendar saturation, the sheet — reads the
+  same derived number. The editor no longer sets them; logging a contribution
+  fires `mesh:changed`, which re-reconciles the store so blobs resize live. The
+  seed plants a small demo log per community instead of hard-coded numbers.
+
 ### Pragmatic deltas from the spec above
 
 - Event keeps `date`/`time`/`name` as its source fields rather than renaming to
   `start`/`end`/`title` — the existing calendar depends on them, and `name` *is*
   the title. `end`/`attendees`/`all_day` from the spec aren't stored (a personal
   iCal feed rarely carries attendees; the UI never needed an end time).
-- The blob field + list still read the **stored** `involvement`; the sheet shows
-  derived **presence** alongside it. Making the field read derived involvement
-  (the "flip") is still deliberately deferred.
+- `tone` (colour family), `parse`, `tenure`, `lastArtifact`, `nextGathering` and
+  `note` remain manual community metadata — only the involvement bundle is derived.

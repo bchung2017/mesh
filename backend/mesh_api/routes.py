@@ -20,17 +20,17 @@ COMMUNITY_TONES = {"coral", "salmon", "sky", "navy"}
 PARSE_STATES = {"ok", "stale"}
 
 # Mutable community fields: incoming camelCase JSON key -> model attribute.
+# involvement/delta/energy are NOT here — they're derived from the contribution
+# log (see Community.to_dict), so the API silently ignores any attempt to set them.
 COMMUNITY_FIELDS = {
     "name": "name", "tone": "tone", "parse": "parse", "parseState": "parse_state",
-    "involvement": "involvement", "delta": "delta", "tenure": "tenure",
-    "energy": "energy", "lastArtifact": "last_artifact",
+    "tenure": "tenure", "lastArtifact": "last_artifact",
     "nextGathering": "next_gathering", "note": "note",
 }
 
 # Defaults for fields omitted on create.
 COMMUNITY_DEFAULTS = {
-    "tone": "sky", "parse": "new face", "parseState": "ok",
-    "involvement": 0, "delta": 0, "tenure": "new", "energy": "settling",
+    "tone": "sky", "parse": "new face", "parseState": "ok", "tenure": "new",
     "lastArtifact": "none yet", "nextGathering": "nothing on the calendar", "note": "",
 }
 
@@ -41,10 +41,6 @@ def _field_error(key: str, value) -> str | None:
         return f"tone must be one of {sorted(COMMUNITY_TONES)}"
     if key == "parseState" and value not in PARSE_STATES:
         return f"parseState must be one of {sorted(PARSE_STATES)}"
-    if key == "involvement" and not (isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 100):
-        return "involvement must be an integer 0–100"
-    if key == "delta" and not (isinstance(value, int) and not isinstance(value, bool)):
-        return "delta must be an integer"
     return None
 
 
@@ -113,8 +109,7 @@ def create_community():
         id=_generate_id(name),
         name=name[:120],
         tone=values["tone"], parse=values["parse"], parse_state=values["parseState"],
-        involvement=values["involvement"], delta=values["delta"], tenure=values["tenure"],
-        energy=values["energy"], last_artifact=values["lastArtifact"],
+        tenure=values["tenure"], last_artifact=values["lastArtifact"],
         next_gathering=values["nextGathering"], note=values["note"],
         position=(max_pos or 0) + 1,
     )

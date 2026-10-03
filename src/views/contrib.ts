@@ -129,6 +129,9 @@ export function buildContribForm(opts: ContribFormOpts): HTMLElement {
           ...(opts.eventId ? { eventId: opts.eventId } : {}),
         });
       }
+      // involvement is derived, so a saved contribution changes the community's
+      // presence — tell the rest of the app to re-reconcile (blob resize, pips)
+      window.dispatchEvent(new Event('mesh:changed'));
       opts.onSaved(row);
     } catch (err) {
       console.error('mesh: contribution save failed', err);

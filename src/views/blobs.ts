@@ -1,5 +1,4 @@
 import type { Community, CommunityData, Tone, ParseState } from '../types';
-import { TONE_HEX } from '../field/palette';
 import type { FieldHandle } from '../field/blobField';
 import { byId } from '../dom';
 import {
@@ -55,8 +54,6 @@ export function initBlobs(show: (id: string) => void, communities: Community[], 
 
   // ---------------- read sheet ----------------
   function openBlob(b: Community): void {
-    const deltaTxt = b.delta > 0 ? '▲ +' + b.delta : b.delta < 0 ? '▼ ' + b.delta : '— 0';
-    const deltaColor = b.delta > 0 ? 'var(--ok)' : b.delta < 0 ? 'var(--warn)' : 'var(--ink-faint)';
     sheet.innerHTML =
       '<div class="sheet-head">' +
         '<div class="big-blob mini-blob ' + b.tone + '"></div>' +
@@ -64,16 +61,12 @@ export function initBlobs(show: (id: string) => void, communities: Community[], 
         '<div class="parse"><span class="parse-chip ' + b.parseState + '">parsed as ' + esc(b.parse) + '</span></div></div>' +
         '<button class="sheet-close" aria-label="close">&#215;</button>' +
       '</div>' +
-      '<div class="sheet-section">' +
-        '<span class="label">involvement</span>' +
-        '<div class="inv-bar"><span style="width:' + b.involvement + '%;background:' + TONE_HEX[b.tone] + '"></span></div>' +
-        '<div class="sheet-line"><b>' + b.involvement + '</b> <span style="color:' + deltaColor + ';font-weight:600;font-size:13px">' + deltaTxt + ' vs last month</span></div>' +
-      '</div>' +
-      '<div class="sheet-section"><span class="label">presence · derived from your log</span>' +
+      // presence is the one number now — derived from the log, no stored involvement
+      '<div class="sheet-section"><span class="label">presence</span>' +
         '<div class="presence-box"><div class="list-note">loading…</div></div></div>' +
       '<div class="statgrid">' +
-        '<div class="stat"><div class="num"></div><div class="sub2">tenure</div></div>' +
-        '<div class="stat"><div class="num sky"></div><div class="sub2">read</div></div>' +
+        '<div class="stat"><div class="num tenure"></div><div class="sub2">tenure</div></div>' +
+        '<div class="stat"><div class="num sky last-active">—</div><div class="sub2">last active</div></div>' +
       '</div>' +
       '<div class="sheet-section"><span class="label">last artifact</span><div class="sheet-line lastArtifact"></div></div>' +
       '<div class="sheet-section"><span class="label">next gathering</span><div class="sheet-line nextGathering"></div></div>' +
@@ -87,8 +80,7 @@ export function initBlobs(show: (id: string) => void, communities: Community[], 
         '<button class="btn-danger" data-act="delete">delete</button>' +
       '</div>';
     sheet.querySelector('.bname')!.textContent = b.name;
-    (sheet.querySelector('.statgrid .num') as HTMLElement).textContent = b.tenure;
-    (sheet.querySelector('.statgrid .num.sky') as HTMLElement).textContent = b.energy;
+    (sheet.querySelector('.statgrid .tenure') as HTMLElement).textContent = b.tenure;
     sheet.querySelector('.lastArtifact')!.textContent = b.lastArtifact;
     sheet.querySelector('.nextGathering')!.textContent = b.nextGathering;
     sheet.querySelector('.note')!.textContent = b.note;
@@ -108,6 +100,8 @@ export function initBlobs(show: (id: string) => void, communities: Community[], 
       .then((p) => {
         const box = sheet.querySelector('.presence-box') as HTMLElement | null;
         if (box) renderPresence(box, p);
+        const la = sheet.querySelector('.last-active') as HTMLElement | null;
+        if (la) la.textContent = p.lastContribution || '—';
       })
       .catch((err) => {
         console.error('mesh: failed to load presence', err);
@@ -155,7 +149,7 @@ export function initBlobs(show: (id: string) => void, communities: Community[], 
       row.querySelector('[data-act="del"]')!.addEventListener('click', () => {
         if (!window.confirm('Delete this contribution?')) return;
         deleteContribution(c.id)
-          .then(() => { loadLog(id); loadPresence(id); })
+          .then(() => { loadLog(id); loadPresence(id); window.dispatchEvent(new Event('mesh:changed')); })
           .catch((err) => console.error('mesh: failed to delete contribution', err));
       });
       box.appendChild(row);
@@ -218,17 +212,12 @@ export function initBlobs(show: (id: string) => void, communities: Community[], 
         '<div class="field"><span class="label">tone</span><div class="tone-swatches">' +
           TONE_LIST.map((t) => '<button type="button" class="swatch mini-blob ' + t + '" data-tone="' + t + '" aria-label="' + t + '"></button>').join('') +
         '</div></div>' +
-        '<div class="field"><span class="label">involvement <em class="inv-val"></em></span>' +
-          '<input name="involvement" type="range" min="0" max="100" step="1"></div>' +
+        '<p class="editor-hint">involvement, delta and energy are derived from the contribution log — log what you did and they follow.</p>' +
         '<label class="field"><span class="label">parse</span><input name="parse" type="text" maxlength="120" autocomplete="off"></label>' +
         '<div class="field"><span class="label">parse state</span><div class="state-chips">' +
           PARSE_STATE_LIST.map((s) => '<button type="button" class="state-chip" data-state="' + s + '">' + s + '</button>').join('') +
         '</div></div>' +
-        '<div class="two-col">' +
-          '<label class="field"><span class="label">energy</span><input name="energy" type="text" maxlength="40" autocomplete="off"></label>' +
-          '<label class="field"><span class="label">tenure</span><input name="tenure" type="text" maxlength="40" autocomplete="off"></label>' +
-        '</div>' +
-        '<label class="field"><span class="label">delta (vs last month)</span><input name="delta" type="number" step="1"></label>' +
+        '<label class="field"><span class="label">tenure</span><input name="tenure" type="text" maxlength="40" autocomplete="off"></label>' +
         '<label class="field"><span class="label">last artifact</span><input name="lastArtifact" type="text" maxlength="200" autocomplete="off"></label>' +
         '<label class="field"><span class="label">next gathering</span><input name="nextGathering" type="text" maxlength="200" autocomplete="off"></label>' +
         '<label class="field"><span class="label">read</span><textarea name="note" rows="2" maxlength="400"></textarea></label>' +
@@ -248,17 +237,10 @@ export function initBlobs(show: (id: string) => void, communities: Community[], 
     // seed values
     (el('name') as HTMLInputElement).value = existing ? existing.name : '';
     (el('parse') as HTMLInputElement).value = existing ? existing.parse : 'new face';
-    (el('energy') as HTMLInputElement).value = existing ? existing.energy : 'settling';
     (el('tenure') as HTMLInputElement).value = existing ? existing.tenure : 'new';
-    (el('delta') as HTMLInputElement).value = String(existing ? existing.delta : 0);
     (el('lastArtifact') as HTMLInputElement).value = existing ? existing.lastArtifact : '';
     (el('nextGathering') as HTMLInputElement).value = existing ? existing.nextGathering : '';
     (el('note') as HTMLTextAreaElement).value = existing ? existing.note : '';
-    const invEl = el('involvement') as HTMLInputElement;
-    invEl.value = String(existing ? existing.involvement : 20);
-    const invVal = sheet.querySelector('.inv-val') as HTMLElement;
-    const syncInv = () => { invVal.textContent = invEl.value; };
-    invEl.addEventListener('input', syncInv); syncInv();
 
     const paintTone = () => sheet.querySelectorAll('.swatch').forEach((s) =>
       s.classList.toggle('on', (s as HTMLElement).dataset.tone === tone));
@@ -293,9 +275,6 @@ export function initBlobs(show: (id: string) => void, communities: Community[], 
         tone,
         parseState,
         parse: (el('parse') as HTMLInputElement).value.trim() || 'new face',
-        involvement: Number(invEl.value),
-        delta: Math.trunc(Number((el('delta') as HTMLInputElement).value) || 0),
-        energy: (el('energy') as HTMLInputElement).value.trim() || 'settling',
         tenure: (el('tenure') as HTMLInputElement).value.trim() || 'new',
         lastArtifact: (el('lastArtifact') as HTMLInputElement).value.trim(),
         nextGathering: (el('nextGathering') as HTMLInputElement).value.trim(),
