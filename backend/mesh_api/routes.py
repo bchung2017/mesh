@@ -7,7 +7,7 @@ from flask import Blueprint, current_app, jsonify, request
 from . import db
 from .ical import get_feed_events
 from .models import Community, Contribution, Event
-from .standing import MODES, compute_standing
+from .presence import MODES, compute_presence
 
 api = Blueprint("api", __name__, url_prefix="/api")
 
@@ -241,13 +241,13 @@ def delete_contribution(contribution_id: int):
     return "", 204
 
 
-@api.get("/communities/<cid>/standing")
-def community_standing(cid: str):
-    """Involvement derived from the contribution log (see standing.py)."""
+@api.get("/communities/<cid>/presence")
+def community_presence(cid: str):
+    """Presence derived from the contribution log (see presence.py)."""
     community = db.session.get(Community, cid)
     if community is None:
         return jsonify({"error": "not found"}), 404
-    return jsonify(compute_standing(community.contributions))
+    return jsonify(compute_presence(community.contributions))
 
 
 @api.get("/events")

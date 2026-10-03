@@ -1,8 +1,8 @@
-"""Standing: the derived read on a community's involvement, computed from its
-contribution log. Pure functions, no I/O — easy to test and cheap to call.
+"""Presence: the app's derived read on how present you are in a community,
+computed from its contribution log. Pure functions, no I/O.
 
 The model: each contribution has a weight (1..10) and a date. Its influence
-fades with age (exponential decay, half-life ~TAU), so standing reflects recent
+fades with age (exponential decay, half-life ~TAU), so presence reflects recent
 investment and decays when you stop showing up. Raw score R is the decayed sum;
 involvement is a saturating 0..100 curve of R so each community stands alone.
 Mode mix is each mode's share of R — "mostly builder, no leadership."
@@ -20,7 +20,7 @@ def _decayed(weight: float, age_days: float) -> float:
     return weight * math.exp(-max(0.0, age_days) / TAU_DAYS)
 
 
-def compute_standing(contributions, today: date | None = None) -> dict:
+def compute_presence(contributions, today: date | None = None) -> dict:
     """contributions: iterable of objects with .date (YYYY-MM-DD), .mode, .weight."""
     today = today or date.today()
     rows = list(contributions)

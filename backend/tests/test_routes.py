@@ -166,18 +166,18 @@ class Contributions(unittest.TestCase):
         self.assertEqual(self.client.delete(f"/api/contributions/{cid}").status_code, 204)
         self.assertEqual(self.client.delete(f"/api/contributions/{cid}").status_code, 404)
 
-    def test_standing_reflects_log(self):
+    def test_presence_reflects_log(self):
         from datetime import date
-        self.assertEqual(self.client.get("/api/communities/HW/standing").get_json()["involvement"], 0)
+        self.assertEqual(self.client.get("/api/communities/HW/presence").get_json()["involvement"], 0)
         self._add(date=date.today().isoformat(), weight=10, mode="built")
-        s = self.client.get("/api/communities/HW/standing").get_json()
+        s = self.client.get("/api/communities/HW/presence").get_json()
         self.assertGreater(s["involvement"], 0)
         self.assertEqual(s["modeMix"]["built"], 100)
 
     def test_delete_community_cascades_contributions(self):
         self._add(cid="MM")
         self.assertEqual(self.client.delete("/api/communities/MM").status_code, 204)
-        self.assertEqual(self.client.get("/api/communities/MM/standing").status_code, 404)
+        self.assertEqual(self.client.get("/api/communities/MM/presence").status_code, 404)
 
 
 if __name__ == "__main__":
