@@ -13,9 +13,13 @@ services:
       # not in this file. Unset ⇒ the app falls back to ephemeral SQLite.
       - key: DATABASE_URL
         sync: false
-      # mesh's isolated Postgres schema. Change if another app already owns it.
+      # mesh's isolated Postgres schema (a namespace inside the one database).
+      # Bumped from `mesh` to `mesh_v2` for the presence-model schema: a fresh
+      # namespace the old deploy never touched, so the new tables are created
+      # clean with no stale-schema collision. The old `mesh` schema can be
+      # dropped in Supabase once this is live.
       - key: DB_SCHEMA
-        value: mesh
+        value: mesh_v2
       # Keep the pool small behind the pooler / free tier.
       - key: PGPOOL_MAX
         value: "3"
