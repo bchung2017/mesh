@@ -54,6 +54,20 @@ def create_app() -> Flask:
         if cfg["backend"] == "postgres" and schema and schema != "public":
             db.session.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema}"))
             db.session.commit()
+
+        # Escape hatch for a schema that create_all() can't migrate in place (it
+        # only creates missing *tables*, never alters an existing one). Set
+        # MESH_DB_RESET=1 to drop mesh's tables and rebuild them from the current
+        # models at boot — the ONLY reliable way past a stale schema when an old
+        # deploy keeps recreating it. DESTRUCTIVE: wipes all rows every boot it's
+        # set, so remove the env var again once the new schema is live.
+        if os.environ.get("MESH_DB_RESET", "").strip().lower() in ("1", "true", "yes"):
+            app.logger.warning(
+                "MESH_DB_RESET set — dropping ALL mesh tables and rebuilding from "
+                "the current models (remove the env var once the schema is live)."
+            )
+            db.drop_all()
+
         db.create_all()
         from .seed import seed_if_empty
         seed_if_empty()
