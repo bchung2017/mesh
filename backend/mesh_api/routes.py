@@ -156,9 +156,16 @@ def ical_events():
 # ---------------- autonomous agent ----------------
 
 def _agent_authorized() -> bool:
-    """When MESH_AGENT_TOKEN is set, require it (Bearer header or ?token=) — the
-    endpoint mutates data autonomously, so a scheduler needs a shared secret.
-    When unset, MESH_AGENT_ENABLED alone gates it."""
+    """The in-app Sync button (same-origin browser request) is always allowed, so
+    the frontend never has to hold a secret. External callers (the scheduler) need
+    the shared secret MESH_AGENT_TOKEN when it's set; when it's unset, the endpoint
+    is gated by MESH_AGENT_ENABLED alone."""
+    # same-origin: the request came from the app's own pages (the Sync button)
+    origin = request.headers.get("Origin") or request.headers.get("Referer")
+    if origin:
+        from urllib.parse import urlparse
+        if urlparse(origin).netloc == request.host:
+            return True
     token = os.environ.get("MESH_AGENT_TOKEN")
     if not token:
         return True

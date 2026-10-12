@@ -79,6 +79,27 @@
 .new-blob-btn:hover{background:#ff5a4a;transform:translateY(-1px)}
 .new-blob-btn:focus-visible{outline:2px solid var(--coral);outline-offset:2px}
 
+/* ---- sync (run the agent from the calendar) ---- */
+.sync-btn{
+  border:1.5px solid rgba(27,42,74,0.14);cursor:pointer;font-family:var(--sans);
+  font-weight:700;font-size:12px;color:var(--ink-dim);background:var(--white);
+  border-radius:999px;padding:7px 14px;transition:background .15s,transform .15s,color .15s;
+}
+.sync-btn:hover{color:var(--ink);transform:translateY(-1px)}
+.sync-btn.busy{color:var(--sky);border-color:var(--sky-soft);background:var(--sky-soft);cursor:default;transform:none}
+.sync-btn:focus-visible{outline:2px solid var(--sky);outline-offset:2px}
+
+/* ---- transient toast (sync result + notices) ---- */
+.mesh-toast{
+  position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom));
+  transform:translateX(-50%) translateY(12px);
+  background:var(--navy);color:#fff;font-family:var(--sans);font-size:13px;font-weight:500;line-height:1.4;
+  padding:11px 16px;border-radius:12px;max-width:min(92vw,420px);text-align:center;
+  box-shadow:0 8px 24px rgba(27,42,74,0.28);opacity:0;pointer-events:none;z-index:60;
+  transition:opacity .25s ease, transform .25s ease;
+}
+.mesh-toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
 /* ---- read-sheet actions ---- */
 .sheet-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:22px}
 .btn-ghost{
@@ -138,6 +159,7 @@
   .swatch{ width: 40px; height: 40px; }
   .state-chip{ padding: 9px 16px; }
   .new-blob-btn{ padding: 9px 16px; }
+  .sync-btn{ min-height: 44px; }
   .btn-ghost,.btn-danger{ min-height: 44px; }
 }
 

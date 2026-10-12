@@ -148,6 +148,17 @@ class AgentEndpoint(unittest.TestCase):
                                 json={"instruction": "make a community called Robotics League"})
                 self.assertEqual(r.status_code, 200)
 
+    def test_same_origin_allowed_without_token(self):
+        # the in-app Sync button: a same-origin request is allowed even with a
+        # token set, so the frontend never has to hold the secret
+        app = make_app()
+        client = app.test_client()
+        with mock.patch.dict(os.environ, {**ENABLED, "MESH_AGENT_TOKEN": "s3cret"}), \
+             mock.patch.dict(sys.modules, {"anthropic": fake_anthropic(create_script())}):
+            r = client.post("/api/agent/run", headers={"Origin": "http://localhost"},
+                            json={"instruction": "make a community called Robotics League"})
+            self.assertEqual(r.status_code, 200)
+
 
 if __name__ == "__main__":
     unittest.main()

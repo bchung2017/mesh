@@ -3,7 +3,7 @@ import type { FieldHandle } from '../field/blobField';
 import { byId } from '../dom';
 import {
   createCommunity, updateCommunity, deleteCommunity, getCommunityEvents,
-  getPresence, getContributions, deleteContribution,
+  getPresence, getContributions, deleteContribution, runAgent,
 } from '../api';
 import type { Contribution } from '../types';
 import { applyUpsert, applyRemove } from '../store';
@@ -310,6 +310,47 @@ export function initBlobs(show: (id: string) => void, communities: Community[], 
   function closeModal(): void { modal.classList.remove('open'); }
 
   byId('new-blob').addEventListener('click', () => openEditor(null));
+
+  // ---------------- sync: run the agent from the calendar, update the blobs ----------------
+  const SYNC_INSTRUCTION =
+    'Sync from my calendar: read the last 14 days and, for each community event not already ' +
+    'logged, materialize it and log a contribution (choosing a sensible mode and weight). Create ' +
+    'a community if an event clearly belongs to a new one. Leave anything already logged alone. ' +
+    'Reply with a one-line summary of what changed.';
+
+  function toast(msg: string): void {
+    let t = document.querySelector('.mesh-toast') as (HTMLElement & { _timer?: number }) | null;
+    if (!t) { t = document.createElement('div'); t.className = 'mesh-toast'; document.body.appendChild(t); }
+    t.textContent = msg;
+    t.classList.add('show');
+    window.clearTimeout(t._timer);
+    t._timer = window.setTimeout(() => t!.classList.remove('show'), 5000);
+  }
+
+  const syncBtn = byId<HTMLButtonElement>('sync-blobs');
+  syncBtn.addEventListener('click', async () => {
+    if (syncBtn.classList.contains('busy')) return;   // already running
+    syncBtn.classList.add('busy'); syncBtn.disabled = true;
+    const label = syncBtn.textContent;
+    syncBtn.textContent = 'syncing…';
+    try {
+      const r = await runAgent(SYNC_INSTRUCTION);
+      if (r.ok) {
+        window.dispatchEvent(new Event('mesh:changed'));          // reconcile → blobs resize/recolor
+        toast(r.result?.summary?.trim() || 'synced — nothing to change');
+      } else if (r.status === 503) {
+        toast('sync isn’t enabled on the server yet');
+      } else {
+        toast('sync failed — try again in a moment');
+      }
+    } catch (err) {
+      console.error('mesh: sync failed', err);
+      toast('sync failed — check your connection');
+    } finally {
+      syncBtn.classList.remove('busy'); syncBtn.disabled = false;
+      syncBtn.textContent = label;
+    }
+  });
   modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
   document.addEventListener('keydown', (e) => {
     if ((e as KeyboardEvent).key === 'Escape' && modal.classList.contains('open')) closeModal();

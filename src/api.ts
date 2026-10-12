@@ -148,6 +148,24 @@ export async function deleteContribution(cid: number): Promise<void> {
   if (!res.ok) throw new Error(`mesh api ${res.status} deleting contribution ${cid}`);
 }
 
+/** Result of an agent sync run. */
+export interface AgentResult { summary: string; actions: unknown[]; steps: number; }
+
+/** Run the autonomous agent once (the in-app Sync button). Same-origin, so no
+ *  token needed. Returns {ok, status, result?} — status 503 means the agent
+ *  isn't enabled on the server. */
+export async function runAgent(instruction?: string): Promise<{ ok: boolean; status: number; result?: AgentResult; error?: string }> {
+  const res = await fetch(`${BASE}/agent/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(instruction ? { instruction } : {}),
+  });
+  if (res.ok) return { ok: true, status: res.status, result: (await res.json()) as AgentResult };
+  let error = '';
+  try { error = (await res.json()).error; } catch { /* ignore */ }
+  return { ok: false, status: res.status, error };
+}
+
 /** Ask the backend's optional LLM to classify free text into mode + weight.
  *  Resolves null when autofill isn't available (no key → 503, or any failure),
  *  so callers fall back to manual entry without a hard error. */
