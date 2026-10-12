@@ -291,7 +291,8 @@ export function initBlobs(show: (id: string) => void, communities: Community[], 
         openBlob(communities.find((c) => c.id === row.id)!);   // land on the saved record
       } catch (err) {
         console.error('mesh: save failed', err);
-        showErr('could not save — try again');
+        const msg = (err as Error).message || '';
+        showErr(/exists/.test(msg) ? msg : 'could not save — try again');
         saveBtn.disabled = false;
       }
     });

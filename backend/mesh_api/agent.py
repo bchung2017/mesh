@@ -64,7 +64,11 @@ def _tool(name, description, properties, required):
 
 TOOLS = [
     _tool("list_communities", "List every community (blob) with its derived presence.", {}, []),
-    _tool("create_community", "Create a new community. involvement is derived, so it starts at 0 until contributions are logged.",
+    _tool("create_community",
+          "Create a new community. FIRST call list_communities and reuse an existing one if the "
+          "event belongs to it — only create when it's genuinely new. Names are unique: creating a "
+          "name that already exists just returns that existing community (never a duplicate). "
+          "involvement is derived, so it starts at 0 until contributions are logged.",
           _community_props(), ["name"]),
     _tool("update_community", "Update a community's manual fields (not involvement/delta/energy — those are derived).",
           {"id": {"type": "string"}, **_community_props()}, ["id"]),
@@ -128,7 +132,14 @@ def _dispatch(name: str, inp: dict):
     if name == "list_communities":
         return {"communities": services.list_communities()}
     if name == "create_community":
-        return services.create_community(inp)
+        try:
+            return services.create_community(inp)
+        except ServiceError as exc:
+            if exc.status == 409:   # name already exists → hand back the existing one
+                existing = services.find_community_by_name(inp.get("name", ""))
+                if existing is not None:
+                    return {"community": existing.to_dict(), "reused": True}
+            raise
     if name == "update_community":
         return services.update_community(inp["id"], {k: v for k, v in inp.items() if k != "id"})
     if name == "delete_community":
@@ -171,6 +182,9 @@ SYSTEM = (
     f"{sorted(services.COMMUNITY_TONES)}.\n\n"
     "The Google calendar (read_calendar) is a READ-ONLY mirror — read it for context, but you "
     "cannot change it. You CAN create/edit/delete mesh's own events, which are separate records.\n\n"
+    "Before creating a community, call list_communities and reuse an existing one that fits — match "
+    "loosely on meaning, not exact spelling (e.g. 'NYC Hardware' already covers a 'hardware meetup'). "
+    "Only create a community when it is genuinely new.\n\n"
     "You are autonomous: apply changes directly with the tools, no confirmation. Be deliberate — "
     "especially deletes. Do only what the instruction asks (or, with no instruction, a light, "
     "safe maintenance pass). Prefer doing nothing over guessing. When finished, reply with a short "

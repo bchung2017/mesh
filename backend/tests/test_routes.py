@@ -89,6 +89,13 @@ class CreateReadDeleteCommunity(unittest.TestCase):
         self.assertEqual(self.client.get("/api/communities/HW").get_json()["name"], "NYC Hardware")
         self.assertEqual(self.client.get("/api/communities/NOPE").status_code, 404)
 
+    def test_duplicate_name_rejected_case_space_insensitive(self):
+        self.assertEqual(self.client.post("/api/communities", json={"name": "Robotics League"}).status_code, 201)
+        for variant in ["Robotics League", "robotics league", "  Robotics   League  "]:
+            self.assertEqual(self.client.post("/api/communities", json={"name": variant}).status_code, 409)
+        names = [c["name"] for c in self.client.get("/api/communities").get_json()]
+        self.assertEqual(names.count("Robotics League"), 1)
+
     def test_delete(self):
         self.assertEqual(self.client.delete("/api/communities/MM").status_code, 204)
         ids = [c["id"] for c in self.client.get("/api/communities").get_json()]

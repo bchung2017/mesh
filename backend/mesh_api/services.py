@@ -69,6 +69,19 @@ def _resolve_communities(ids) -> list:
     return Community.query.filter(Community.id.in_([str(i) for i in ids])).all()
 
 
+def _norm_name(s: str) -> str:
+    """Normalize a community name for duplicate detection: trimmed, collapsed
+    whitespace, case-folded. So 'NYC Hardware', 'nyc  hardware' are the same."""
+    return " ".join((s or "").split()).casefold()
+
+
+def find_community_by_name(name: str) -> Community | None:
+    target = _norm_name(name)
+    if not target:
+        return None
+    return next((c for c in Community.query.all() if _norm_name(c.name) == target), None)
+
+
 def _require_community(cid: str) -> Community:
     c = db.session.get(Community, cid)
     if c is None:
@@ -107,6 +120,11 @@ def create_community(data: dict) -> dict:
     name = (data.get("name") or "").strip()
     if not name:
         raise ServiceError(400, "name is required")
+    # no two communities with the same name (case/space-insensitive) — blocks
+    # duplicates from the UI and the agent alike
+    dup = find_community_by_name(name)
+    if dup is not None:
+        raise ServiceError(409, f"a community named '{dup.name}' already exists")
     values = dict(COMMUNITY_DEFAULTS)
     for key in COMMUNITY_FIELDS:
         if key == "name" or key not in data:

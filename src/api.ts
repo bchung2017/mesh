@@ -31,13 +31,20 @@ export function updateCommunity(id: string, patch: Partial<CommunityData>): Prom
   }).then((r) => asJson<CommunityData>(r));
 }
 
-/** Create a community. The server generates the id + ordering. */
-export function createCommunity(patch: Partial<CommunityData> & { name: string }): Promise<CommunityData> {
-  return fetch(`${BASE}/communities`, {
+/** Create a community. The server generates the id + ordering, and rejects a
+ *  duplicate name (409) with a friendly message. */
+export async function createCommunity(patch: Partial<CommunityData> & { name: string }): Promise<CommunityData> {
+  const res = await fetch(`${BASE}/communities`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(patch),
-  }).then((r) => asJson<CommunityData>(r));
+  });
+  if (res.status === 409) {
+    let msg = 'a community with that name already exists';
+    try { msg = (await res.json()).error || msg; } catch { /* ignore */ }
+    throw new Error(msg);
+  }
+  return asJson<CommunityData>(res);
 }
 
 /** Delete a community. */

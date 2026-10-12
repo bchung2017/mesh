@@ -72,6 +72,25 @@ class AgentLoop(unittest.TestCase):
             self.assertTrue(any(a["tool"] == "create_community" and a["ok"] for a in out["actions"]))
             self.assertIn("RL", [c["id"] for c in services.list_communities()])
 
+    def test_create_existing_name_reuses_not_duplicates(self):
+        # the seed has "NYC Hardware"; the agent "creates" it again → reuse, no dup row
+        script = [
+            resp([Block(type="tool_use", name="create_community",
+                        input={"name": "nyc hardware"}, id="t1")], "tool_use"),
+            resp([Block(type="text", text="reused the existing one.")], "end_turn"),
+        ]
+        app = make_app()
+        with mock.patch.dict(os.environ, ENABLED), \
+             mock.patch.dict(sys.modules, {"anthropic": fake_anthropic(script)}), \
+             app.app_context():
+            from mesh_api import services
+            from mesh_api.agent import run_agent
+            before = len(services.list_communities())
+            out = run_agent("add NYC Hardware")
+            self.assertEqual(len(services.list_communities()), before)   # no new community
+            act = [a for a in out["actions"] if a["tool"] == "create_community"][0]
+            self.assertTrue(act["ok"] and act["result"].get("reused"))
+
     def test_tool_error_is_reported_not_raised(self):
         # deleting a missing community → ServiceError surfaced as a failed action,
         # the loop keeps going and still returns a summary
