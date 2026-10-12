@@ -211,73 +211,90 @@ DEFAULT_INSTRUCTION = (
 )
 
 
-def run_agent(instruction: str | None = None, on_progress=None, cancelled=None) -> dict:
-    """Run one autonomous session. Returns {summary, actions, steps}. Assumes an
-    app context (the caller provides one).
+def _system_now() -> str:
+    # the model doesn't know the current date, so tell it — otherwise "last 14
+    # days" / "this year" resolve to its training-era sense of "now"
+    return SYSTEM + f"\n\nToday's date is {date.today().isoformat()}. Compute all date ranges from it."
 
-    on_progress(steps_done, changes) is called after each step (for a progress
-    bar); cancelled() -> bool is checked before each step so a run can be stopped.
+
+def init_messages(instruction: str | None) -> list:
+    return [{"role": "user", "content": instruction or DEFAULT_INSTRUCTION}]
+
+
+def _serialize(blocks) -> list:
+    """Model response content -> plain JSON-able dicts, so a run can be persisted
+    and resumed across requests (the Messages API accepts these dicts as input)."""
+    out = []
+    for b in blocks:
+        t = getattr(b, "type", None)
+        if t == "text":
+            out.append({"type": "text", "text": b.text})
+        elif t == "tool_use":
+            out.append({"type": "tool_use", "id": b.id, "name": b.name, "input": dict(b.input)})
+    return out
+
+
+def changes_count(actions) -> int:
+    return sum(1 for a in actions if a.get("ok"))
+
+
+def step(messages: list, actions: list):
+    """Run ONE iteration — one model call plus any tool calls it makes — against
+    plain-dict `messages`/`actions`. Returns (messages, actions, finished, summary).
+    Raises AgentError on a model failure. Pure w.r.t. its inputs: no threads, runs
+    entirely inside the caller's request/app context (the path that's known to work).
     """
-    if not enabled():
-        raise AgentError("agent not enabled (set MESH_AGENT_ENABLED=1 and ANTHROPIC_API_KEY)")
     try:
         import anthropic
     except ImportError as exc:
         raise AgentError("anthropic SDK not installed") from exc
-
-    # the model doesn't know the current date, so tell it — otherwise "last 14
-    # days" / "this year" resolve to its training-era sense of "now"
-    system = SYSTEM + f"\n\nToday's date is {date.today().isoformat()}. Compute all date ranges from it."
-
     client = anthropic.Anthropic()
-    messages = [{"role": "user", "content": instruction or DEFAULT_INSTRUCTION}]
-    actions: list[dict] = []
+    try:
+        resp = client.messages.create(
+            model=MODEL, max_tokens=MAX_TOKENS, system=_system_now(), tools=TOOLS, messages=messages,
+        )
+    except Exception as exc:
+        raise AgentError(f"model call failed: {exc}") from exc
 
-    def _changes() -> int:
-        return sum(1 for a in actions if a.get("ok"))
+    messages = messages + [{"role": "assistant", "content": _serialize(resp.content)}]
 
-    for step in range(MAX_STEPS):
-        if cancelled is not None and cancelled():
-            return {"summary": f"Cancelled after {_changes()} change(s).",
-                    "actions": actions, "steps": step, "cancelled": True}
+    if resp.stop_reason != "tool_use":
+        summary = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text").strip()
+        return messages, actions, True, summary
+
+    tool_results = []
+    for block in resp.content:
+        if getattr(block, "type", None) != "tool_use":
+            continue
+        inp = dict(block.input)
         try:
-            resp = client.messages.create(
-                model=MODEL, max_tokens=MAX_TOKENS, system=system,
-                tools=TOOLS, messages=messages,
-            )
-        except Exception as exc:
-            raise AgentError(f"model call failed: {exc}") from exc
+            result = _dispatch(block.name, inp)
+            actions = actions + [{"tool": block.name, "input": inp, "ok": True, "result": result}]
+            tool_results.append({"type": "tool_result", "tool_use_id": block.id,
+                                 "content": json.dumps(result, default=str)})
+        except ServiceError as exc:
+            actions = actions + [{"tool": block.name, "input": inp, "ok": False, "error": exc.message}]
+            tool_results.append({"type": "tool_result", "tool_use_id": block.id,
+                                 "content": f"error: {exc.message}", "is_error": True})
+    messages = messages + [{"role": "user", "content": tool_results}]
+    return messages, actions, False, None
 
-        messages.append({"role": "assistant", "content": resp.content})
 
-        if resp.stop_reason != "tool_use":
-            summary = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text").strip()
-            if on_progress is not None:
-                on_progress(step + 1, _changes())
-            return {"summary": summary, "actions": actions, "steps": step + 1}
-
-        tool_results = []
-        for block in resp.content:
-            if getattr(block, "type", None) != "tool_use":
-                continue
-            try:
-                result = _dispatch(block.name, dict(block.input))
-                actions.append({"tool": block.name, "input": block.input, "ok": True, "result": result})
-                tool_results.append({"type": "tool_result", "tool_use_id": block.id,
-                                     "content": json.dumps(result, default=str)})
-            except ServiceError as exc:
-                actions.append({"tool": block.name, "input": block.input, "ok": False, "error": exc.message})
-                tool_results.append({"type": "tool_result", "tool_use_id": block.id,
-                                     "content": f"error: {exc.message}", "is_error": True})
-        messages.append({"role": "user", "content": tool_results})
+def run_agent(instruction: str | None = None, on_progress=None, cancelled=None) -> dict:
+    """Run a full session synchronously (used by the CLI runner and tests). The
+    HTTP endpoint runs the same step() one at a time across requests instead."""
+    if not enabled():
+        raise AgentError("agent not enabled (set MESH_AGENT_ENABLED=1 and ANTHROPIC_API_KEY)")
+    messages = init_messages(instruction)
+    actions: list = []
+    for i in range(MAX_STEPS):
+        if cancelled is not None and cancelled():
+            return {"summary": f"Cancelled after {changes_count(actions)} change(s).",
+                    "actions": actions, "steps": i, "cancelled": True}
+        messages, actions, finished, summary = step(messages, actions)
         if on_progress is not None:
-            on_progress(step + 1, _changes())
-
-    # reached the step cap — don't error; the work so far is committed and the
-    # operations are idempotent, so return partial progress and let the user
-    # run sync again to continue (matters for a big year-to-date backfill)
-    changed = sum(1 for a in actions if a.get("ok"))
-    return {
-        "summary": f"Reached the step limit after {changed} change(s) — run sync again to continue.",
-        "actions": actions, "steps": MAX_STEPS, "truncated": True,
-    }
+            on_progress(i + 1, changes_count(actions))
+        if finished:
+            return {"summary": summary, "actions": actions, "steps": i + 1}
+    return {"summary": f"Reached the step limit after {changes_count(actions)} change(s) — run sync again to continue.",
+            "actions": actions, "steps": MAX_STEPS, "truncated": True}

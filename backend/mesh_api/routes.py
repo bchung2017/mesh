@@ -176,8 +176,8 @@ def _agent_authorized() -> bool:
 
 @api.post("/agent/run")
 def agent_run():
-    """Start an agent sync as a background job and return it immediately (202).
-    The run continues server-side; poll /agent/jobs/<id> for progress.
+    """Create a sync job and return it (202). The frontend then drives it with
+    /step — each step is one short request, so nothing runs in a thread.
     Body: {instruction?: str, kind?: 'recent'|'deep'}."""
     from . import agent, jobs  # lazy import avoids a module-load cycle
     if not agent.enabled():
@@ -187,14 +187,27 @@ def agent_run():
     data = _body()
     instruction = (data.get("instruction") or "").strip() or None
     kind = (data.get("kind") or "").strip() or None
-    job = jobs.start(current_app._get_current_object(), instruction, kind)
+    job = jobs.start(instruction, kind)
     return jsonify(job.to_dict()), 202
+
+
+@api.post("/agent/jobs/<int:job_id>/step")
+def agent_step(job_id: int):
+    """Advance a job by one step (one model call + its tool calls). Short request."""
+    from . import agent, jobs
+    if not agent.enabled():
+        return jsonify({"error": "agent not enabled"}), 503
+    if not _agent_authorized():
+        return jsonify({"error": "unauthorized"}), 403
+    job = jobs.do_step(job_id)
+    if job is None:
+        return jsonify({"error": "not found"}), 404
+    return jsonify(job.to_dict())
 
 
 @api.get("/agent/job")
 def agent_active_job():
-    """The current running sync job, if any (so the UI can resume its progress
-    bar after a page refresh)."""
+    """The current running sync job, if any (so the UI resumes after a refresh)."""
     from . import agent, jobs
     if not agent.enabled():
         return jsonify({"active": None})
@@ -216,8 +229,7 @@ def agent_cancel_job(job_id: int):
     from . import jobs
     if not _agent_authorized():
         return jsonify({"error": "unauthorized"}), 403
-    job = jobs.get(job_id)
+    job = jobs.cancel(job_id)
     if job is None:
         return jsonify({"error": "not found"}), 404
-    jobs.request_cancel(job_id)
     return jsonify(job.to_dict())

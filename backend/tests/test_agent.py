@@ -159,18 +159,15 @@ class AgentLoop(unittest.TestCase):
                 run_agent("do something")
 
 
-def _sync_start(app, instruction, kind=None):
-    """A synchronous stand-in for jobs.start used in endpoint tests — runs the
-    job inline (no thread) so assertions are deterministic."""
-    from mesh_api import db, jobs
-    from mesh_api.models import SyncJob
-    job = SyncJob(status="running", kind=kind, instruction=instruction, steps_total=40)
-    db.session.add(job)
-    db.session.commit()
-    jid = job.id
-    jobs.run_job(app, jid, instruction)
-    db.session.expire_all()   # run_job committed in its own session; re-read the DB
-    return db.session.get(SyncJob, jid)
+def _run_to_done(client, limit=12):
+    r = client.post("/api/agent/run", json={"instruction": "make a community called Robotics League", "kind": "recent"})
+    jid = r.get_json()["id"]
+    j = r.get_json()
+    for _ in range(limit):
+        j = client.post(f"/api/agent/jobs/{jid}/step").get_json()
+        if j["status"] != "running":
+            break
+    return r, j
 
 
 class AgentEndpoint(unittest.TestCase):
@@ -180,63 +177,69 @@ class AgentEndpoint(unittest.TestCase):
         os.environ.pop("MESH_AGENT_ENABLED", None)
         self.assertEqual(client.post("/api/agent/run", json={}).status_code, 503)
 
-    def test_enabled_starts_job_that_completes(self):
+    def test_run_then_step_to_completion(self):
         app = make_app()
         client = app.test_client()
         with mock.patch.dict(os.environ, ENABLED), \
-             mock.patch("mesh_api.jobs.start", side_effect=_sync_start), \
              mock.patch.dict(sys.modules, {"anthropic": fake_anthropic(create_script())}):
-            r = client.post("/api/agent/run", json={"instruction": "make a community called Robotics League", "kind": "recent"})
+            r, j = _run_to_done(client)
             self.assertEqual(r.status_code, 202)
-            body = r.get_json()
-            self.assertIn("id", body)
-            self.assertEqual(body["status"], "done")   # _sync_start ran it inline
+            self.assertEqual(r.get_json()["status"], "running")   # starts running at 0%
+            self.assertEqual(j["status"], "done")                 # stepped to done
             self.assertIn("RL", [c["id"] for c in client.get("/api/communities").get_json()])
-            # the job is pollable
-            self.assertEqual(client.get(f"/api/agent/jobs/{body['id']}").get_json()["status"], "done")
 
     def test_token_required_when_set(self):
         app = make_app()
         client = app.test_client()
-        with mock.patch.dict(os.environ, {**ENABLED, "MESH_AGENT_TOKEN": "s3cret"}), \
-             mock.patch("mesh_api.jobs.start", side_effect=_sync_start), \
-             mock.patch.dict(sys.modules, {"anthropic": fake_anthropic(create_script())}):
+        with mock.patch.dict(os.environ, {**ENABLED, "MESH_AGENT_TOKEN": "s3cret"}):
             self.assertEqual(client.post("/api/agent/run", json={}).status_code, 403)
             self.assertEqual(
                 client.post("/api/agent/run", headers={"Authorization": "Bearer nope"}, json={}).status_code, 403)
-            r = client.post("/api/agent/run", headers={"Authorization": "Bearer s3cret"}, json={})
-            self.assertEqual(r.status_code, 202)
+            with mock.patch.dict(sys.modules, {"anthropic": fake_anthropic(create_script())}):
+                r = client.post("/api/agent/run", headers={"Authorization": "Bearer s3cret"}, json={})
+                self.assertEqual(r.status_code, 202)
 
     def test_same_origin_allowed_without_token(self):
         app = make_app()
         client = app.test_client()
         with mock.patch.dict(os.environ, {**ENABLED, "MESH_AGENT_TOKEN": "s3cret"}), \
-             mock.patch("mesh_api.jobs.start", side_effect=_sync_start), \
              mock.patch.dict(sys.modules, {"anthropic": fake_anthropic(create_script())}):
             r = client.post("/api/agent/run", headers={"Origin": "http://localhost"}, json={})
             self.assertEqual(r.status_code, 202)
 
 
 class Jobs(unittest.TestCase):
-    def test_run_job_records_progress_and_result(self):
+    def test_step_advances_then_completes(self):
+        app = make_app()
+        with mock.patch.dict(os.environ, ENABLED), \
+             mock.patch.dict(sys.modules, {"anthropic": fake_anthropic(create_script())}), app.app_context():
+            from mesh_api import jobs
+            job = jobs.start("make a community called Robotics League", "recent")
+            self.assertEqual(job.status, "running")
+            s1 = jobs.do_step(job.id)
+            self.assertEqual(s1.status, "running")
+            self.assertEqual(s1.steps_done, 1)
+            s2 = jobs.do_step(job.id)
+            self.assertEqual(s2.status, "done")
+            self.assertTrue(s2.summary)
+
+    def test_cancel_marks_cancelled_and_step_is_noop(self):
         app = make_app()
         with mock.patch.dict(os.environ, ENABLED), app.app_context():
-            from mesh_api import db
-            from mesh_api.models import SyncJob
-            job = SyncJob(status="running", steps_total=40)
-            db.session.add(job); db.session.commit()
-            jid = job.id
-        with mock.patch.dict(os.environ, ENABLED), \
-             mock.patch.dict(sys.modules, {"anthropic": fake_anthropic(create_script())}):
             from mesh_api import jobs
-            jobs.run_job(app, jid, "make a community called Robotics League")
-        with app.app_context():
-            from mesh_api import db
+            job = jobs.start("x", "recent")
+            self.assertEqual(jobs.cancel(job.id).status, "cancelled")
+            self.assertEqual(jobs.do_step(job.id).status, "cancelled")   # no-op after cancel
+
+    def test_stale_threaded_job_is_retired(self):
+        app = make_app()
+        with mock.patch.dict(os.environ, ENABLED), app.app_context():
+            from mesh_api import db, jobs
             from mesh_api.models import SyncJob
-            done = db.session.get(SyncJob, jid)
-            self.assertEqual(done.status, "done")
-            self.assertTrue(done.summary)
-            self.assertGreaterEqual(done.steps_done, 1)
+            j = SyncJob(status="running", steps_total=40)   # no state → a pre-stepping job
+            db.session.add(j); db.session.commit()
+            self.assertIsNone(jobs.active())                 # active() retires it
+            self.assertEqual(db.session.get(SyncJob, j.id).status, "failed")
 
     def test_cancel_hook_stops_the_run(self):
         # three tool-use rounds then end; cancel before the 2nd step

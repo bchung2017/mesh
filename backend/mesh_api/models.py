@@ -74,6 +74,7 @@ class SyncJob(db.Model):
     changes = db.Column(db.Integer, nullable=False, default=0)   # tool calls that mutated
     summary = db.Column(db.Text)
     error = db.Column(db.Text)
+    state = db.Column(db.Text)   # JSON {messages, actions} — the resumable conversation
     created_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     updated_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
 

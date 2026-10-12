@@ -4,7 +4,7 @@ import { byId } from '../dom';
 import {
   createCommunity, updateCommunity, deleteCommunity, getCommunityEvents,
   getPresence, getContributions, deleteContribution,
-  startSync, getSyncJob, getActiveSyncJob, cancelSyncJob, type SyncJob,
+  startSync, stepSyncJob, getActiveSyncJob, cancelSyncJob, type SyncJob,
 } from '../api';
 import type { Contribution } from '../types';
 import { applyUpsert, applyRemove } from '../store';
@@ -390,9 +390,11 @@ export function initBlobs(show: (id: string) => void, communities: Community[], 
   const barLabel = byId('sync-bar-label');
   const barCancel = byId<HTMLButtonElement>('sync-bar-cancel');
   let activeJobId: number | null = null;
-  let pollTimer: number | null = null;
+  let lastJob: SyncJob | null = null;
+  let stepping = false;
 
   function paintJob(job: SyncJob): void {
+    lastJob = job;
     bar.hidden = false;
     barFill.style.width = job.percent + '%';
     barFill.className = 'sync-bar-fill' + (job.status === 'failed' ? ' failed' : '');
@@ -406,10 +408,7 @@ export function initBlobs(show: (id: string) => void, communities: Community[], 
     barCancel.hidden = job.status !== 'running';
   }
 
-  function stopPolling(): void { if (pollTimer !== null) { window.clearInterval(pollTimer); pollTimer = null; } }
-
   function finishJob(job: SyncJob): void {
-    stopPolling();
     activeJobId = null;
     try { localStorage.removeItem('mesh.syncJob'); } catch { /* ignore */ }
     window.dispatchEvent(new Event('mesh:changed'));
@@ -420,13 +419,35 @@ export function initBlobs(show: (id: string) => void, communities: Community[], 
     window.setTimeout(() => { bar.hidden = true; barFill.style.width = '0%'; }, 2800);
   }
 
-  function pollJob(id: number): void {
-    stopPolling();
-    pollTimer = window.setInterval(() => {
-      getSyncJob(id)
-        .then((job) => { job.status === 'running' ? paintJob(job) : finishJob(job); })
-        .catch((err) => console.error('mesh: sync poll failed', err));   // transient — keep polling
-    }, 1500);
+  const sleep = (ms: number) => new Promise((r) => window.setTimeout(r, ms));
+
+  // drive the job one step at a time — each step is a short request on the path
+  // that's known to work. No server threads, so nothing can hang; a stuck step
+  // times out client-side and retries, and cancel stops the loop instantly.
+  async function stepLoop(id: number): Promise<void> {
+    if (stepping) return;
+    stepping = true;
+    let errors = 0;
+    try {
+      while (activeJobId === id) {
+        let job: SyncJob;
+        try {
+          job = await stepSyncJob(id);
+          errors = 0;
+        } catch (err) {
+          console.error('mesh: sync step failed', err);
+          if (++errors >= 3) { if (lastJob) finishJob({ ...lastJob, status: 'failed', error: 'sync lost connection' }); break; }
+          await sleep(2000);
+          continue;
+        }
+        if (activeJobId !== id) break;             // cancelled while the step was in flight
+        paintJob(job);
+        if (job.status !== 'running') { finishJob(job); break; }
+        await sleep(150);                           // small yield between steps
+      }
+    } finally {
+      stepping = false;
+    }
   }
 
   function attachJob(job: SyncJob): void {
@@ -434,14 +455,22 @@ export function initBlobs(show: (id: string) => void, communities: Community[], 
     try { localStorage.setItem('mesh.syncJob', String(job.id)); } catch { /* ignore */ }
     barCancel.disabled = false;
     paintJob(job);
-    pollJob(job.id);
+    if (job.status === 'running') void stepLoop(job.id);
+    else finishJob(job);
   }
 
+  // cancel is bulletproof: it stops the loop and clears the bar locally no matter
+  // what the server does, then best-effort asks the server to mark it cancelled
   barCancel.addEventListener('click', () => {
     if (activeJobId === null) return;
+    const id = activeJobId;
+    activeJobId = null;                             // stops the step loop immediately
     barCancel.disabled = true;
     barLabel.textContent = 'cancelling…';
-    cancelSyncJob(activeJobId).catch((err) => console.error('mesh: cancel failed', err));
+    cancelSyncJob(id).catch((err) => console.error('mesh: cancel failed', err));
+    const base: SyncJob = (lastJob && lastJob.id === id) ? lastJob
+      : { id, status: 'cancelled', kind: null, percent: 0, stepsDone: 0, stepsTotal: 40, changes: 0, summary: null, error: null, updatedAt: null };
+    finishJob({ ...base, status: 'cancelled' });
   });
 
   async function startSyncJob(kind: 'recent' | 'deep'): Promise<void> {

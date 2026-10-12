@@ -1,98 +1,95 @@
-"""Run agent syncs as background jobs so the HTTP request returns instantly and
-the work continues server-side — pollable (progress bar), cancellable, and
-survives a page refresh because the state lives in the DB (SyncJob).
+"""Agent syncs as resumable, frontend-driven jobs — no background threads.
 
-Single-worker friendly: the request handler spawns a daemon thread that updates
-the job row as it goes; poll requests read that row. Cancellation is an in-memory
-flag (one process), checked between steps.
+A job holds the full conversation state in the DB. The frontend starts a job,
+then calls /step repeatedly; each call runs ONE agent step (one model call + any
+tool calls) inside that normal request — the exact path that works — and saves
+progress. So progress is real, cancel is immediate, and a refresh resumes from
+the saved state. Nothing runs in a thread, so nothing can hang a worker.
 """
-import threading
-from datetime import datetime, timedelta, timezone
+import json
+from datetime import datetime, timezone
 
 from . import agent, db
 from .models import SyncJob
-
-STALE_SECONDS = 150          # no heartbeat this long → the worker died; fail the job
-_cancel: set[int] = set()    # in-memory cancel flags (single process)
-_lock = threading.Lock()
 
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _aware(dt: datetime) -> datetime:
-    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
-
-
-def start(app, instruction: str | None, kind: str | None = None) -> SyncJob:
-    """Create a job and run it in a background thread. Returns the job row."""
-    job = SyncJob(status="running", kind=kind, instruction=instruction,
-                  steps_total=agent.MAX_STEPS)
+def start(instruction: str | None, kind: str | None = None) -> SyncJob:
+    job = SyncJob(
+        status="running", kind=kind, instruction=instruction, steps_total=agent.MAX_STEPS,
+        state=json.dumps({"messages": agent.init_messages(instruction), "actions": []}),
+    )
     db.session.add(job)
     db.session.commit()
-    jid = job.id
-    threading.Thread(target=run_job, args=(app, jid, instruction), daemon=True).start()
     return job
 
 
-def request_cancel(job_id: int) -> None:
-    with _lock:
-        _cancel.add(job_id)
+def do_step(job_id: int) -> SyncJob | None:
+    """Advance a job by one step. All work happens in this request context."""
+    job = db.session.get(SyncJob, job_id)
+    if job is None:
+        return None
+    if job.status != "running":
+        return job
+    if not job.state:   # a pre-stepping (threaded) job with no resumable state
+        job.status, job.error, job.updated_at = "failed", "stale job — run sync again", _now()
+        db.session.commit()
+        return job
+    if job.steps_done >= job.steps_total:
+        job.status = "done"
+        if not job.summary:
+            job.summary = f"Reached the step limit after {job.changes} change(s) — run sync again to continue."
+        job.updated_at = _now()
+        db.session.commit()
+        return job
 
-
-def run_job(app, job_id: int, instruction: str | None) -> None:
-    """The synchronous body of a job (also called directly in tests)."""
-    with app.app_context():
-        try:
-            def on_progress(steps_done: int, changes: int) -> None:
-                j = db.session.get(SyncJob, job_id)
-                if j is None:
-                    return
-                j.steps_done, j.changes, j.updated_at = steps_done, changes, _now()
-                db.session.commit()
-
-            def cancelled() -> bool:
-                with _lock:
-                    return job_id in _cancel
-
-            result = agent.run_agent(instruction, on_progress=on_progress, cancelled=cancelled)
-            j = db.session.get(SyncJob, job_id)
-            j.status = "cancelled" if result.get("cancelled") else "done"
-            j.summary = result.get("summary")
-            j.steps_done = result.get("steps", j.steps_done)
-            j.changes = sum(1 for a in result.get("actions", []) if a.get("ok"))
-            j.updated_at = _now()
+    try:
+        state = json.loads(job.state)
+        messages, actions, finished, summary = agent.step(state.get("messages", []), state.get("actions", []))
+    except agent.AgentError as exc:
+        job.status, job.error, job.updated_at = "failed", str(exc)[:500], _now()
+        db.session.commit()
+        return job
+    except Exception as exc:
+        db.session.rollback()
+        job = db.session.get(SyncJob, job_id)
+        if job is not None:
+            job.status, job.error, job.updated_at = "failed", str(exc)[:500], _now()
             db.session.commit()
-        except Exception as exc:  # AgentError or anything else — record it, don't crash the worker
-            db.session.rollback()
-            j = db.session.get(SyncJob, job_id)
-            if j is not None:
-                j.status, j.error, j.updated_at = "failed", str(exc)[:500], _now()
-                db.session.commit()
-        finally:
-            with _lock:
-                _cancel.discard(job_id)
-            db.session.remove()
+        return job
+
+    job.steps_done += 1
+    job.changes = agent.changes_count(actions)
+    job.state = json.dumps({"messages": messages, "actions": actions}, default=str)
+    job.updated_at = _now()
+    if finished:
+        job.status, job.summary = "done", summary
+    db.session.commit()
+    return job
 
 
-def _reap_if_stale(job: SyncJob | None) -> SyncJob | None:
-    """A job left 'running' with no recent heartbeat means its worker died
-    (deploy/restart). Mark it failed so the UI stops waiting on it."""
+def cancel(job_id: int) -> SyncJob | None:
+    job = db.session.get(SyncJob, job_id)
     if job is not None and job.status == "running":
-        if _now() - _aware(job.updated_at) > timedelta(seconds=STALE_SECONDS):
-            job.status = "failed"
-            job.error = "interrupted — the server restarted mid-sync; run sync again (it resumes safely)"
-            job.updated_at = _now()
-            db.session.commit()
+        job.status = "cancelled"
+        job.summary = f"Cancelled after {job.changes} change(s)."
+        job.updated_at = _now()
+        db.session.commit()
     return job
 
 
 def get(job_id: int) -> SyncJob | None:
-    return _reap_if_stale(db.session.get(SyncJob, job_id))
+    return db.session.get(SyncJob, job_id)
 
 
 def active() -> SyncJob | None:
-    """The current running job, if any (for resuming the progress bar on reload)."""
+    """The current running job (for resuming the progress bar on reload)."""
     job = SyncJob.query.filter_by(status="running").order_by(SyncJob.id.desc()).first()
-    return _reap_if_stale(job)
+    if job is not None and not job.state:   # old threaded job — retire it, don't resume
+        job.status, job.error = "failed", "interrupted — run sync again"
+        db.session.commit()
+        return None
+    return job

@@ -192,8 +192,15 @@ export async function startSync(instruction: string, kind: 'recent' | 'deep'): P
   return { ok: false, status: res.status };
 }
 
-export function getSyncJob(id: number): Promise<SyncJob> {
-  return fetch(`${BASE}/agent/jobs/${id}`).then((r) => asJson<SyncJob>(r));
+/** Advance a sync job by one step (one model call + its tools). The frontend
+ *  calls this in a loop to drive the run — each is a short request, with a
+ *  client-side timeout so a stuck step can't hang the loop. */
+export function stepSyncJob(id: number, timeoutMs = 90000): Promise<SyncJob> {
+  const ctrl = new AbortController();
+  const t = window.setTimeout(() => ctrl.abort(), timeoutMs);
+  return fetch(`${BASE}/agent/jobs/${id}/step`, { method: 'POST', signal: ctrl.signal })
+    .then((r) => asJson<SyncJob>(r))
+    .finally(() => window.clearTimeout(t));
 }
 
 /** The current running sync job, if any (to resume the progress bar on reload). */
