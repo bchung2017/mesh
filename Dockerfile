@@ -5,6 +5,7 @@ COPY package.json package-lock.json ./
 RUN npm ci
 COPY tsconfig.json vite.config.ts index.html ./
 COPY src ./src
+COPY public ./public       # PWA manifest, service worker, icons — Vite copies these to dist/
 RUN npm run build          # typecheck + emit /build/dist
 
 # ---- stage 2: backend runtime (Python) ----
