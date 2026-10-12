@@ -10,6 +10,10 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+# keep the real embedding model from loading during tests; dedup tests mock embed()
+from mesh_api import embeddings as _emb  # noqa: E402
+_emb._failed = True
+
 
 def make_app():
     tmp = tempfile.mkdtemp()
@@ -89,7 +93,27 @@ class AgentLoop(unittest.TestCase):
             out = run_agent("add NYC Hardware")
             self.assertEqual(len(services.list_communities()), before)   # no new community
             act = [a for a in out["actions"] if a["tool"] == "create_community"][0]
-            self.assertTrue(act["ok"] and act["result"].get("reused"))
+            # dispatch hands the match back so the model reuses it, instead of duplicating
+            self.assertTrue(act["ok"] and act["result"].get("blocked"))
+            self.assertEqual(act["result"]["suggestion"]["id"], "HW")
+
+    def test_find_similar_community_tool(self):
+        def fake_embed(text):
+            return [1.0, 0.0] if "hardware" in text.lower() else [0.0, 1.0]
+        script = [
+            resp([Block(type="tool_use", name="find_similar_community",
+                        input={"name": "hardware crew"}, id="t1")], "tool_use"),
+            resp([Block(type="text", text="found a match.")], "end_turn"),
+        ]
+        app = make_app()
+        with mock.patch.dict(os.environ, ENABLED), \
+             mock.patch.dict(sys.modules, {"anthropic": fake_anthropic(script)}), \
+             mock.patch("mesh_api.embeddings.embed", side_effect=fake_embed), \
+             app.app_context():
+            from mesh_api.agent import run_agent
+            out = run_agent("is hardware crew already a community?")
+            act = [a for a in out["actions"] if a["tool"] == "find_similar_community"][0]
+            self.assertIn("HW", [m["id"] for m in act["result"]["matches"]])
 
     def test_tool_error_is_reported_not_raised(self):
         # deleting a missing community → ServiceError surfaced as a failed action,

@@ -16,7 +16,7 @@ api = Blueprint("api", __name__, url_prefix="/api")
 
 @api.errorhandler(ServiceError)
 def _handle_service_error(err: ServiceError):
-    return jsonify({"error": err.message}), err.status
+    return jsonify({"error": err.message, **err.extra}), err.status
 
 
 def _body() -> dict:

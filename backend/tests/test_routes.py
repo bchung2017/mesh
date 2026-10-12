@@ -8,6 +8,10 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+# keep the real embedding model from loading during tests; dedup tests mock embed()
+from mesh_api import embeddings as _emb  # noqa: E402
+_emb._failed = True
+
 
 def make_client():
     # a throwaway on-disk SQLite so each test app starts seeded and isolated
@@ -88,6 +92,20 @@ class CreateReadDeleteCommunity(unittest.TestCase):
     def test_get_one(self):
         self.assertEqual(self.client.get("/api/communities/HW").get_json()["name"], "NYC Hardware")
         self.assertEqual(self.client.get("/api/communities/NOPE").status_code, 404)
+
+    def test_conceptually_similar_name_soft_blocked_then_forcible(self):
+        # fake embeddings: anything about hardware points the same way, else orthogonal
+        def fake_embed(text):
+            return [1.0, 0.0] if "hardware" in text.lower() else [0.0, 1.0]
+        with mock.patch("mesh_api.embeddings.embed", side_effect=fake_embed):
+            r = self.client.post("/api/communities", json={"name": "Hardware Collective"})
+            self.assertEqual(r.status_code, 409)
+            body = r.get_json()
+            self.assertEqual(body["kind"], "similar")        # soft, not exact
+            self.assertEqual(body["suggestion"]["id"], "HW")  # points at NYC Hardware
+            # force bypasses the soft warning
+            self.assertEqual(
+                self.client.post("/api/communities", json={"name": "Hardware Collective", "force": True}).status_code, 201)
 
     def test_duplicate_name_rejected_case_space_insensitive(self):
         self.assertEqual(self.client.post("/api/communities", json={"name": "Robotics League"}).status_code, 201)

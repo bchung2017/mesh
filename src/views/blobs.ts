@@ -257,7 +257,7 @@ export function initBlobs(show: (id: string) => void, communities: Community[], 
     paintState();
 
     const errEl = sheet.querySelector('.editor-error') as HTMLElement;
-    const showErr = (msg: string) => { errEl.textContent = msg; errEl.hidden = false; };
+    const showErr = (msg: string) => { errEl.classList.remove('as-prompt'); errEl.textContent = msg; errEl.hidden = false; };
 
     sheet.querySelector('.sheet-close')!.addEventListener('click', closeModal);
     sheet.querySelector('[data-act="cancel"]')!.addEventListener('click', () => {
@@ -291,11 +291,54 @@ export function initBlobs(show: (id: string) => void, communities: Community[], 
         openBlob(communities.find((c) => c.id === row.id)!);   // land on the saved record
       } catch (err) {
         console.error('mesh: save failed', err);
-        const msg = (err as Error).message || '';
-        showErr(/exists/.test(msg) ? msg : 'could not save — try again');
+        const c = err as { conflict?: boolean; kind?: string; suggestion?: { id: string; name: string }; message?: string };
+        if (c && c.conflict && c.suggestion) {
+          showConflict(c.kind === 'similar', c.suggestion, patch);
+        } else {
+          showErr(/exists/.test(c?.message || '') ? (c.message as string) : 'could not save — try again');
+        }
         saveBtn.disabled = false;
       }
     });
+
+    // a duplicate/near-duplicate prompt: open the match, or (for a soft 'similar'
+    // match) create anyway with force
+    function showConflict(similar: boolean, sug: { id: string; name: string }, patch: Partial<CommunityData> & { name: string }): void {
+      errEl.classList.add('as-prompt');
+      errEl.hidden = false;
+      errEl.innerHTML = '';
+      const line = document.createElement('div');
+      line.textContent = similar ? 'This looks a lot like “' + sug.name + '”.'
+                                  : 'A community named “' + sug.name + '” already exists.';
+      const actions = document.createElement('div');
+      actions.className = 'dup-actions';
+      const openBtn = document.createElement('button');
+      openBtn.type = 'button'; openBtn.className = 'linklike'; openBtn.textContent = 'open ' + sug.name;
+      openBtn.addEventListener('click', () => {
+        const ex = communities.find((x) => x.id === sug.id);
+        if (ex) openBlob(ex);
+      });
+      actions.appendChild(openBtn);
+      if (similar) {
+        const anyway = document.createElement('button');
+        anyway.type = 'button'; anyway.className = 'linklike'; anyway.textContent = 'create anyway';
+        anyway.addEventListener('click', async () => {
+          anyway.disabled = true;
+          try {
+            const row = await createCommunity(patch, true);
+            applyUpsert(communities, row, field);
+            renderList();
+            openBlob(communities.find((x) => x.id === row.id)!);
+          } catch (e2) {
+            console.error('mesh: forced create failed', e2);
+            showErr('could not save — try again');
+          }
+        });
+        actions.appendChild(anyway);
+      }
+      errEl.appendChild(line);
+      errEl.appendChild(actions);
+    }
 
     modal.classList.add('open');
     (el('name') as HTMLInputElement).focus();

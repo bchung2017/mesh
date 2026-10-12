@@ -7,13 +7,20 @@ status codes) and the autonomous agent (agent.py, which exposes these as tools)
 call the SAME functions — so there is exactly one implementation of the rules,
 and the agent can never drift from the API.
 """
+import json
+import os
 import re
 from datetime import date, timedelta
 
-from . import db
+from . import db, embeddings
 from .ical import get_feed_events
-from .models import Community, Contribution, Event
+from .models import Community, CommunityEmbedding, Contribution, Event
 from .presence import MODES, compute_presence
+
+# cosine at/above this means "probably the same community" (soft warning, not a
+# hard block). ~0.45 separates lexically-related names from unrelated ones (which
+# score ~0) with near-zero false positives; tune via env if needed.
+DEDUP_THRESHOLD = float(os.environ.get("MESH_DEDUP_THRESHOLD", "0.45"))
 
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 TIME_RE = re.compile(r"^\d{2}:\d{2}$")
@@ -35,11 +42,13 @@ COMMUNITY_DEFAULTS = {
 
 
 class ServiceError(Exception):
-    """A domain error carrying an HTTP-ish status (400 bad input, 404 missing)."""
-    def __init__(self, status: int, message: str):
+    """A domain error carrying an HTTP-ish status (400 bad input, 404 missing, 409
+    duplicate). `extra` is merged into the JSON response (e.g. a dedup suggestion)."""
+    def __init__(self, status: int, message: str, extra: dict | None = None):
         super().__init__(message)
         self.status = status
         self.message = message
+        self.extra = extra or {}
 
 
 # ---------------- validation helpers ----------------
@@ -82,6 +91,52 @@ def find_community_by_name(name: str) -> Community | None:
     return next((c for c in Community.query.all() if _norm_name(c.name) == target), None)
 
 
+# ---------------- conceptual dedup (static embeddings; optional) ----------------
+
+def _community_vector(c: Community) -> list | None:
+    """The cached name embedding for a community, computed + stored on first use
+    and recomputed if missing. Returns None when embeddings are unavailable."""
+    row = db.session.get(CommunityEmbedding, c.id)
+    if row is not None:
+        try:
+            return json.loads(row.vector)
+        except (TypeError, ValueError):
+            db.session.delete(row)
+    vec = embeddings.embed(c.name)
+    if vec is None:
+        return None
+    db.session.merge(CommunityEmbedding(community_id=c.id, vector=json.dumps(vec), model=embeddings.MODEL_NAME))
+    db.session.commit()
+    return vec
+
+
+def _invalidate_embedding(cid: str) -> None:
+    row = db.session.get(CommunityEmbedding, cid)
+    if row is not None:
+        db.session.delete(row)
+
+
+def similar_communities(name: str, exclude_id: str | None = None,
+                        threshold: float = DEDUP_THRESHOLD) -> list[tuple[Community, float]]:
+    """Existing communities whose name is conceptually close to `name`, ranked
+    by cosine (desc). Empty when embeddings are unavailable."""
+    cand = embeddings.embed(name)
+    if cand is None:
+        return []
+    scored = []
+    for c in Community.query.all():
+        if exclude_id and c.id == exclude_id:
+            continue
+        vec = _community_vector(c)
+        if not vec:
+            continue
+        score = embeddings.cosine(cand, vec)
+        if score >= threshold:
+            scored.append((c, score))
+    scored.sort(key=lambda t: t[1], reverse=True)
+    return scored
+
+
 def _require_community(cid: str) -> Community:
     c = db.session.get(Community, cid)
     if c is None:
@@ -120,11 +175,20 @@ def create_community(data: dict) -> dict:
     name = (data.get("name") or "").strip()
     if not name:
         raise ServiceError(400, "name is required")
-    # no two communities with the same name (case/space-insensitive) — blocks
-    # duplicates from the UI and the agent alike
+    # exact name (case/space-insensitive) → hard block, can't be forced
     dup = find_community_by_name(name)
     if dup is not None:
-        raise ServiceError(409, f"a community named '{dup.name}' already exists")
+        raise ServiceError(409, f"a community named '{dup.name}' already exists",
+                           extra={"kind": "exact", "suggestion": {"id": dup.id, "name": dup.name}})
+    # conceptually similar name → soft warning (bypass with force=true)
+    if not data.get("force"):
+        sims = similar_communities(name)
+        if sims:
+            match, score = sims[0]
+            raise ServiceError(409, f"looks a lot like '{match.name}' — open it, or create anyway", extra={
+                "kind": "similar",
+                "suggestion": {"id": match.id, "name": match.name, "score": round(score, 2)},
+            })
     values = dict(COMMUNITY_DEFAULTS)
     for key in COMMUNITY_FIELDS:
         if key == "name" or key not in data:
@@ -148,6 +212,7 @@ def create_community(data: dict) -> dict:
 
 def update_community(cid: str, data: dict) -> dict:
     community = _require_community(cid)
+    renamed = "name" in data and (data.get("name") or "") != community.name
     for key, value in data.items():
         attr = COMMUNITY_FIELDS.get(key)
         if attr is None:
@@ -156,6 +221,8 @@ def update_community(cid: str, data: dict) -> dict:
         if err:
             raise ServiceError(400, err)
         setattr(community, attr, value)
+    if renamed:
+        _invalidate_embedding(cid)   # stale — recomputed on next similarity check
     db.session.commit()
     return community.to_dict()
 

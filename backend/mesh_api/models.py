@@ -58,6 +58,24 @@ class Community(db.Model):
         }
 
 
+class CommunityEmbedding(db.Model):
+    """A cached static embedding of a community's name, for conceptual dedup.
+
+    A SEPARATE table (not a column on Community) on purpose: create_all() adds a
+    missing *table* to an existing schema, but never adds a column — so this ships
+    to the live database with no migration and no data loss. Computed lazily and
+    recomputed when the name changes (the row is dropped); CASCADE-removed with
+    the community.
+    """
+    __tablename__ = "community_embeddings"
+
+    community_id = db.Column(
+        db.String(8), db.ForeignKey("communities.id", ondelete="CASCADE"), primary_key=True,
+    )
+    vector = db.Column(db.Text, nullable=False)   # JSON list of floats
+    model = db.Column(db.String(64))              # which embedder produced it
+
+
 class Event(db.Model):
     """A calendar thing, in two layers (see docs/presence-model.md):
 

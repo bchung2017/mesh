@@ -65,11 +65,17 @@ def _tool(name, description, properties, required):
 TOOLS = [
     _tool("list_communities", "List every community (blob) with its derived presence.", {}, []),
     _tool("create_community",
-          "Create a new community. FIRST call list_communities and reuse an existing one if the "
-          "event belongs to it — only create when it's genuinely new. Names are unique: creating a "
-          "name that already exists just returns that existing community (never a duplicate). "
-          "involvement is derived, so it starts at 0 until contributions are logged.",
-          _community_props(), ["name"]),
+          "Create a new community. FIRST use find_similar_community (and list_communities) and reuse "
+          "an existing match instead of making a near-duplicate. If the name is an exact or "
+          "conceptually-similar match this returns {blocked:true, suggestion:{id,name}} instead of "
+          "creating — then either reuse suggestion.id, or, only when it's genuinely a different group, "
+          "call create_community again with force:true. involvement is derived (starts at 0).",
+          {**_community_props(), "force": {"type": "boolean", "description": "create despite a similar-name warning"}},
+          ["name"]),
+    _tool("find_similar_community",
+          "Find existing communities whose name is conceptually close to a candidate (ranked by score). "
+          "Call this before create_community to avoid duplicates.",
+          {"name": {"type": "string"}}, ["name"]),
     _tool("update_community", "Update a community's manual fields (not involvement/delta/energy — those are derived).",
           {"id": {"type": "string"}, **_community_props()}, ["id"]),
     _tool("delete_community", "Delete a community and all its contributions. Irreversible.",
@@ -135,11 +141,16 @@ def _dispatch(name: str, inp: dict):
         try:
             return services.create_community(inp)
         except ServiceError as exc:
-            if exc.status == 409:   # name already exists → hand back the existing one
-                existing = services.find_community_by_name(inp.get("name", ""))
-                if existing is not None:
-                    return {"community": existing.to_dict(), "reused": True}
+            if exc.status == 409:
+                # duplicate (exact) or conceptually similar — don't make a dup.
+                # Hand the match back so the model decides: reuse it (log against
+                # suggestion.id), or, for a 'similar' block, retry with force=true
+                # if it's genuinely a different community.
+                return {"blocked": True, "reason": exc.message, **exc.extra}
             raise
+    if name == "find_similar_community":
+        matches = services.similar_communities(inp.get("name", ""))
+        return {"matches": [{"id": c.id, "name": c.name, "score": round(s, 2)} for c, s in matches]}
     if name == "update_community":
         return services.update_community(inp["id"], {k: v for k, v in inp.items() if k != "id"})
     if name == "delete_community":
@@ -182,9 +193,10 @@ SYSTEM = (
     f"{sorted(services.COMMUNITY_TONES)}.\n\n"
     "The Google calendar (read_calendar) is a READ-ONLY mirror — read it for context, but you "
     "cannot change it. You CAN create/edit/delete mesh's own events, which are separate records.\n\n"
-    "Before creating a community, call list_communities and reuse an existing one that fits — match "
-    "loosely on meaning, not exact spelling (e.g. 'NYC Hardware' already covers a 'hardware meetup'). "
-    "Only create a community when it is genuinely new.\n\n"
+    "Before creating a community, call find_similar_community and reuse an existing match — match on "
+    "meaning, not spelling (e.g. 'NYC Hardware' already covers a 'hardware meetup'). create_community "
+    "blocks a duplicate and hands back the match; reuse it, or retry with force:true only if it's truly "
+    "a different group. Only create when it is genuinely new.\n\n"
     "You are autonomous: apply changes directly with the tools, no confirmation. Be deliberate — "
     "especially deletes. Do only what the instruction asks (or, with no instruction, a light, "
     "safe maintenance pass). Prefer doing nothing over guessing. When finished, reply with a short "

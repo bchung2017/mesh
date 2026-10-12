@@ -31,18 +31,29 @@ export function updateCommunity(id: string, patch: Partial<CommunityData>): Prom
   }).then((r) => asJson<CommunityData>(r));
 }
 
-/** Create a community. The server generates the id + ordering, and rejects a
- *  duplicate name (409) with a friendly message. */
-export async function createCommunity(patch: Partial<CommunityData> & { name: string }): Promise<CommunityData> {
+/** A 409 from create: an exact duplicate ('exact', hard) or a conceptually
+ *  similar name ('similar', bypass with force). Carries the matched community. */
+export interface CreateConflict extends Error {
+  conflict: true;
+  kind?: 'exact' | 'similar';
+  suggestion?: { id: string; name: string; score?: number };
+}
+
+/** Create a community. The server generates the id + ordering. On a duplicate or
+ *  a conceptually-similar name it rejects (409) with a suggestion; pass
+ *  force=true to create despite a 'similar' warning. */
+export async function createCommunity(patch: Partial<CommunityData> & { name: string }, force = false): Promise<CommunityData> {
   const res = await fetch(`${BASE}/communities`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(patch),
+    body: JSON.stringify(force ? { ...patch, force: true } : patch),
   });
   if (res.status === 409) {
-    let msg = 'a community with that name already exists';
-    try { msg = (await res.json()).error || msg; } catch { /* ignore */ }
-    throw new Error(msg);
+    let body: { error?: string; kind?: 'exact' | 'similar'; suggestion?: { id: string; name: string; score?: number } } = {};
+    try { body = await res.json(); } catch { /* ignore */ }
+    const e = new Error(body.error || 'that community already exists') as CreateConflict;
+    e.conflict = true; e.kind = body.kind; e.suggestion = body.suggestion;
+    throw e;
   }
   return asJson<CommunityData>(res);
 }

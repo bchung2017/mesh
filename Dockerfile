@@ -17,6 +17,9 @@ WORKDIR /app
 
 COPY backend/requirements.txt ./backend/requirements.txt
 RUN pip install -r backend/requirements.txt
+# Bake the static embedding model into the image so conceptual dedup works
+# offline at runtime (first load otherwise downloads it). Non-fatal if it fails.
+RUN python -c "from model2vec import StaticModel; StaticModel.from_pretrained('minishlab/potion-base-8M')" || true
 
 COPY backend ./backend
 # Flask serves the built frontend from <repo-root>/dist (see mesh_api/__init__.py)
