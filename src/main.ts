@@ -69,3 +69,12 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('mesh:changed', load);
 
 load();
+
+// register the service worker so mesh is installable + works offline (PWA).
+// served from the app's own origin by Flask, so scope is the whole app.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch((err) =>
+      console.warn('mesh: service worker registration failed', err));
+  });
+}

@@ -5,9 +5,13 @@ to Postgres/Supabase, isolated inside its own schema so mesh can share one
 database with other apps without collisions. See mesh_api/config.py and the
 stackify-v1 skill for the pattern.
 """
+import mimetypes
 import os
 
 from flask import Flask, send_from_directory
+
+# serve the PWA manifest with the right type (Werkzeug doesn't know .webmanifest)
+mimetypes.add_type("application/manifest+json", ".webmanifest")
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import text
