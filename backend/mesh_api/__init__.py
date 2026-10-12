@@ -50,6 +50,27 @@ def create_app() -> Flask:
     from .routes import api
     app.register_blueprint(api)
 
+    def _ensure_columns(cfg):
+        """create_all() only creates missing *tables*, never adds a column to an
+        existing one — so a schema from an older deploy self-heals here instead of
+        500ing. Additive, idempotent, no data loss; works on SQLite and Postgres."""
+        from sqlalchemy import inspect as sa_inspect
+        schema = cfg["schema"] if (cfg["backend"] == "postgres" and cfg["schema"] != "public") else None
+        wanted = [("sync_jobs", "state", "TEXT")]   # (table, column, type)
+        insp = sa_inspect(db.engine)
+        for table, column, coltype in wanted:
+            try:
+                if not insp.has_table(table, schema=schema):
+                    continue
+                cols = [c["name"] for c in insp.get_columns(table, schema=schema)]
+            except Exception:
+                continue
+            if column not in cols:
+                qualified = (f'"{schema}".' if schema else "") + table
+                app.logger.warning("mesh: adding missing column %s.%s", table, column)
+                db.session.execute(text(f"ALTER TABLE {qualified} ADD COLUMN {column} {coltype}"))
+                db.session.commit()
+
     with app.app_context():
         # On Postgres, create the app's schema first (idempotent) so the
         # unqualified CREATE TABLEs below land in it — search_path is already
@@ -73,6 +94,7 @@ def create_app() -> Flask:
             db.drop_all()
 
         db.create_all()
+        _ensure_columns(cfg)   # additive column migrations create_all() can't do
         from .seed import seed_if_empty
         seed_if_empty()
 
