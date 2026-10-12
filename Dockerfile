@@ -25,4 +25,7 @@ COPY --from=frontend /build/dist ./dist
 EXPOSE 5000
 # Render injects $PORT. One worker by default so first-boot seeding can't race;
 # raise WEB_CONCURRENCY once seeding is gated/idempotent.
-CMD ["sh", "-c", "gunicorn --chdir backend wsgi:app --bind 0.0.0.0:${PORT:-5000} --workers ${WEB_CONCURRENCY:-1} --timeout 120"]
+# --timeout 300 gives a deep calendar backfill room to finish within one request
+# (the agent is capped at MESH_AGENT_MAX_STEPS rounds; a deep sync may still need
+# a couple of runs — it's idempotent).
+CMD ["sh", "-c", "gunicorn --chdir backend wsgi:app --bind 0.0.0.0:${PORT:-5000} --workers ${WEB_CONCURRENCY:-1} --timeout 300"]

@@ -327,14 +327,49 @@ export function initBlobs(show: (id: string) => void, communities: Community[], 
     t._timer = window.setTimeout(() => t!.classList.remove('show'), 5000);
   }
 
+  function deepInstruction(): string {
+    const year = new Date().getFullYear();
+    return 'Deep sync from my calendar: read from ' + year + '-01-01 to today in month-sized ' +
+      'windows. For each community event not already logged, materialize it and log a contribution ' +
+      '(sensible mode and weight). If an event clearly belongs to a community that doesn’t exist yet, ' +
+      'create it — otherwise reuse the existing one. Skip purely personal events. Leave anything ' +
+      'already logged alone. Summarize what you created and logged.';
+  }
+
   const syncBtn = byId<HTMLButtonElement>('sync-blobs');
-  syncBtn.addEventListener('click', async () => {
-    if (syncBtn.classList.contains('busy')) return;   // already running
+  const syncMenu = byId('sync-menu');
+
+  function closeSyncMenu(): void {
+    syncMenu.hidden = true;
+    syncBtn.setAttribute('aria-expanded', 'false');
+  }
+  syncBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (syncBtn.classList.contains('busy')) return;
+    const open = !syncMenu.hidden;
+    syncMenu.hidden = open;
+    syncBtn.setAttribute('aria-expanded', String(!open));
+  });
+  syncMenu.addEventListener('click', (e) => e.stopPropagation());
+  document.addEventListener('click', closeSyncMenu);
+  document.addEventListener('keydown', (e) => {
+    if ((e as KeyboardEvent).key === 'Escape') closeSyncMenu();
+  });
+  syncMenu.querySelectorAll('[data-mode]').forEach((item) =>
+    item.addEventListener('click', () => {
+      const deep = (item as HTMLElement).dataset.mode === 'deep';
+      closeSyncMenu();
+      void runSync(deep ? deepInstruction() : SYNC_INSTRUCTION, deep);
+    }));
+
+  async function runSync(instruction: string, deep: boolean): Promise<void> {
+    if (syncBtn.classList.contains('busy')) return;
     syncBtn.classList.add('busy'); syncBtn.disabled = true;
-    const label = syncBtn.textContent;
-    syncBtn.textContent = 'syncing…';
+    const label = syncBtn.innerHTML;
+    syncBtn.textContent = deep ? 'deep syncing…' : 'syncing…';
+    if (deep) toast('deep sync reads your whole year — this can take a minute…');
     try {
-      const r = await runAgent(SYNC_INSTRUCTION);
+      const r = await runAgent(instruction);
       if (r.ok) {
         window.dispatchEvent(new Event('mesh:changed'));          // reconcile → blobs resize/recolor
         toast(r.result?.summary?.trim() || 'synced — nothing to change');
@@ -348,9 +383,9 @@ export function initBlobs(show: (id: string) => void, communities: Community[], 
       toast('sync failed — check your connection');
     } finally {
       syncBtn.classList.remove('busy'); syncBtn.disabled = false;
-      syncBtn.textContent = label;
+      syncBtn.innerHTML = label;
     }
-  });
+  }
   modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
   document.addEventListener('keydown', (e) => {
     if ((e as KeyboardEvent).key === 'Escape' && modal.classList.contains('open')) closeModal();

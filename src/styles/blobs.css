@@ -88,6 +88,22 @@
 .sync-btn:hover{color:var(--ink);transform:translateY(-1px)}
 .sync-btn.busy{color:var(--sky);border-color:var(--sky-soft);background:var(--sky-soft);cursor:default;transform:none}
 .sync-btn:focus-visible{outline:2px solid var(--sky);outline-offset:2px}
+.sync-btn .caret{font-size:10px;margin-left:1px;opacity:0.7}
+.sync-wrap{position:relative;display:inline-flex}
+.sync-menu{
+  position:absolute;top:calc(100% + 6px);right:0;z-index:50;min-width:188px;
+  background:var(--white);border:1px solid rgba(27,42,74,0.10);border-radius:12px;
+  box-shadow:0 8px 24px rgba(27,42,74,0.16);padding:6px;
+  display:flex;flex-direction:column;gap:2px;
+}
+.sync-menu[hidden]{display:none}
+.sync-menu button{
+  display:flex;flex-direction:column;align-items:flex-start;gap:1px;text-align:left;width:100%;
+  border:none;background:none;cursor:pointer;font-family:var(--sans);font-size:13px;font-weight:700;
+  color:var(--ink);padding:9px 11px;border-radius:9px;transition:background .12s;
+}
+.sync-menu button:hover{background:var(--bg)}
+.sync-menu button small{font-size:11px;font-weight:500;color:var(--ink-faint)}
 
 /* ---- transient toast (sync result + notices) ---- */
 .mesh-toast{

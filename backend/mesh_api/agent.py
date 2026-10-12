@@ -18,7 +18,10 @@ from .presence import MODES
 from .services import ServiceError
 
 MODEL = os.environ.get("MESH_AGENT_MODEL", "claude-haiku-4-5")
-MAX_STEPS = 16          # hard cap on tool-use rounds, so a loop can't run away
+# hard cap on tool-use rounds so a run can't run away (and stays under the HTTP
+# timeout). A deep year-to-date backfill may need more than one run; it's
+# idempotent (materialize + upsert), so hitting the cap just means "run again".
+MAX_STEPS = int(os.environ.get("MESH_AGENT_MAX_STEPS", "40"))
 MAX_TOKENS = 1024
 
 
@@ -225,4 +228,11 @@ def run_agent(instruction: str | None = None) -> dict:
                                      "content": f"error: {exc.message}", "is_error": True})
         messages.append({"role": "user", "content": tool_results})
 
-    raise AgentError(f"hit the {MAX_STEPS}-step cap without finishing")
+    # reached the step cap — don't error; the work so far is committed and the
+    # operations are idempotent, so return partial progress and let the user
+    # run sync again to continue (matters for a big year-to-date backfill)
+    changed = sum(1 for a in actions if a.get("ok"))
+    return {
+        "summary": f"Reached the step limit after {changed} change(s) — run sync again to continue.",
+        "actions": actions, "steps": MAX_STEPS, "truncated": True,
+    }

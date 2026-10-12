@@ -76,7 +76,13 @@
         <span class="label">every blob</span>
         <div class="head-right">
           <span class="label" id="blob-count"></span>
-          <button class="sync-btn" id="sync-blobs" title="update the blobs from your calendar">sync</button>
+          <div class="sync-wrap">
+            <button class="sync-btn" id="sync-blobs" title="update the blobs from your calendar" aria-haspopup="true" aria-expanded="false">sync <span class="caret">▾</span></button>
+            <div class="sync-menu" id="sync-menu" role="menu" hidden>
+              <button role="menuitem" data-mode="recent">sync recent<small>last 14 days</small></button>
+              <button role="menuitem" data-mode="deep">deep sync<small>everything since Jan 1</small></button>
+            </div>
+          </div>
           <button class="new-blob-btn" id="new-blob">+ new</button>
         </div>
       </div>
