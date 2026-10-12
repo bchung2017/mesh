@@ -386,12 +386,19 @@ export function initBlobs(show: (id: string) => void, communities: Community[], 
 
   // ---- progress bar controller (session-proof: job state lives on the server) ----
   const bar = byId('sync-bar');
+  const barTrack = bar.querySelector<HTMLElement>('.sync-bar-track');
   const barFill = byId('sync-bar-fill');
   const barLabel = byId('sync-bar-label');
   const barCancel = byId<HTMLButtonElement>('sync-bar-cancel');
   let activeJobId: number | null = null;
   let lastJob: SyncJob | null = null;
   let stepping = false;
+
+  // the sweeping stripe: on whenever a step request is in flight, so the bar
+  // never looks frozen during the (multi-second) first model call at 0%
+  function setWorking(on: boolean): void {
+    if (barTrack) barTrack.classList.toggle('working', on);
+  }
 
   function paintJob(job: SyncJob): void {
     lastJob = job;
@@ -400,8 +407,10 @@ export function initBlobs(show: (id: string) => void, communities: Community[], 
     barFill.className = 'sync-bar-fill' + (job.status === 'failed' ? ' failed' : '');
     const verb = job.kind === 'deep' ? 'deep syncing' : 'syncing';
     const logged = job.changes ? ' · ' + job.changes + ' logged' : '';
+    // at 0% show "…" (it's thinking), not a raw "0%" that reads as stuck
+    const prog = job.percent > 0 ? ' · ' + job.percent + '%' : '…';
     barLabel.textContent =
-      job.status === 'running' ? verb + ' from your calendar · ' + job.percent + '%' + logged
+      job.status === 'running' ? verb + ' your calendar' + prog + logged
       : job.status === 'done' ? 'sync complete' + logged
       : job.status === 'cancelled' ? 'sync cancelled' + logged
       : 'sync failed';
@@ -410,6 +419,7 @@ export function initBlobs(show: (id: string) => void, communities: Community[], 
 
   function finishJob(job: SyncJob): void {
     activeJobId = null;
+    setWorking(false);
     try { localStorage.removeItem('mesh.syncJob'); } catch { /* ignore */ }
     window.dispatchEvent(new Event('mesh:changed'));
     paintJob(job);
@@ -431,6 +441,7 @@ export function initBlobs(show: (id: string) => void, communities: Community[], 
     try {
       while (activeJobId === id) {
         let job: SyncJob;
+        setWorking(true);                           // stripe sweeps while the step runs
         try {
           job = await stepSyncJob(id);
           errors = 0;
@@ -441,6 +452,7 @@ export function initBlobs(show: (id: string) => void, communities: Community[], 
           continue;
         }
         if (activeJobId !== id) break;             // cancelled while the step was in flight
+        setWorking(job.status === 'running');       // keep sweeping only while more steps remain
         paintJob(job);
         if (job.status !== 'running') { finishJob(job); break; }
         await sleep(150);                           // small yield between steps

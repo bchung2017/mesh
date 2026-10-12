@@ -234,8 +234,28 @@ def _serialize(blocks) -> list:
     return out
 
 
+# tools that actually change data — reads (list_*, find_similar, read_calendar)
+# don't count, so the "N logged" counter reflects real mutations, not activity
+_MUTATING = {
+    "create_community", "update_community", "delete_community",
+    "log_contribution", "update_contribution", "delete_contribution",
+    "create_event", "update_event", "delete_event", "materialize_event",
+}
+
+
 def changes_count(actions) -> int:
-    return sum(1 for a in actions if a.get("ok"))
+    n = 0
+    for a in actions:
+        if not a.get("ok") or a.get("tool") not in _MUTATING:
+            continue
+        res = a.get("result")
+        if isinstance(res, dict):
+            if res.get("blocked"):           # a dedup-blocked create isn't a change
+                continue
+            if "created" in res and not res.get("created"):  # idempotent no-op (re-run)
+                continue
+        n += 1
+    return n
 
 
 def step(messages: list, actions: list):
