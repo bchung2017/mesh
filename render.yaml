@@ -26,3 +26,15 @@ services:
       # One gunicorn worker so first-boot seeding can't race (see Dockerfile).
       - key: WEB_CONCURRENCY
         value: "1"
+      # --- autonomous agent (off unless all three are set; see docs/agent.md) ---
+      # ANTHROPIC_API_KEY: secret, set in the dashboard — powers the agent + autofill.
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      # Turn the agent on. It changes real data with no confirmation, so it's
+      # opt-in: set to "1" in the dashboard when you want it.
+      - key: MESH_AGENT_ENABLED
+        sync: false
+      # Shared secret the scheduler must send to POST /api/agent/run. Set the same
+      # value as the MESH_AGENT_TOKEN repo secret the GitHub Action uses.
+      - key: MESH_AGENT_TOKEN
+        sync: false

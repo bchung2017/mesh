@@ -309,7 +309,7 @@ class EventTwoLayer(unittest.TestCase):
             "date": "2026-05-11", "time": "10:00", "allDay": False,
             "name": "Standup", "location": None, "description": None,
         }]
-        with mock.patch("mesh_api.routes.get_feed_events", return_value=(True, feed)):
+        with mock.patch("mesh_api.services.get_feed_events", return_value=(True, feed)):
             out = self.client.get("/api/ical/events?timeMin=2026-05-01&timeMax=2026-06-01").get_json()
         occ = {e["uid"]: e for e in out["events"]}
         annotated = occ["weekly-1::2026-05-04T10:00"]
@@ -327,7 +327,7 @@ class EventTwoLayer(unittest.TestCase):
             "date": "2026-05-04", "time": "10:00", "allDay": False,
             "name": "Renamed in feed", "location": "new room", "description": None,
         }]
-        with mock.patch("mesh_api.routes.get_feed_events", return_value=(True, feed)):
+        with mock.patch("mesh_api.services.get_feed_events", return_value=(True, feed)):
             out = self.client.get("/api/ical/events?timeMin=2026-05-01&timeMax=2026-06-01").get_json()
         occ = out["events"][0]
         self.assertEqual(occ["name"], "Renamed in feed")   # source layer followed the feed

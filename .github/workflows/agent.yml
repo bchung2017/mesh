@@ -1,0 +1,45 @@
+name: mesh agent
+
+# Scheduled + manual trigger for the autonomous mesh agent. Render's free tier
+# has no cron, so this GitHub Action is the scheduler: it just POSTs the
+# force-run endpoint, which does all the work server-side.
+#
+# Required repo secrets (Settings → Secrets and variables → Actions):
+#   MESH_URL          e.g. https://mesh-zdpb.onrender.com
+#   MESH_AGENT_TOKEN  the same value set as MESH_AGENT_TOKEN on the Render service
+# The service must also have MESH_AGENT_ENABLED=1 and ANTHROPIC_API_KEY set.
+
+on:
+  schedule:
+    - cron: "17 13 * * *"   # daily ~13:17 UTC; adjust to taste
+  workflow_dispatch:        # a manual "Run workflow" button, with an optional instruction
+    inputs:
+      instruction:
+        description: "What the agent should do (blank = light maintenance pass)"
+        required: false
+        default: ""
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger the mesh agent
+        env:
+          MESH_URL: ${{ secrets.MESH_URL }}
+          MESH_AGENT_TOKEN: ${{ secrets.MESH_AGENT_TOKEN }}
+          INSTRUCTION: ${{ github.event.inputs.instruction }}
+        run: |
+          if [ -z "$MESH_URL" ] || [ -z "$MESH_AGENT_TOKEN" ]; then
+            echo "MESH_URL and MESH_AGENT_TOKEN repo secrets must be set." >&2
+            exit 1
+          fi
+          body=$(jq -n --arg i "$INSTRUCTION" '{instruction:$i}')
+          echo "Calling agent at $MESH_URL/api/agent/run"
+          http=$(curl -sS -o /tmp/out.json -w "%{http_code}" \
+            -X POST "$MESH_URL/api/agent/run" \
+            -H "Authorization: Bearer $MESH_AGENT_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data "$body")
+          echo "HTTP $http"
+          cat /tmp/out.json | jq . 2>/dev/null || cat /tmp/out.json
+          test "$http" = "200"
