@@ -103,9 +103,21 @@ TOOLS = [
 
     _tool("read_calendar",
           "Read the subscribed Google calendar (READ-ONLY mirror) for context — what's scheduled. "
-          "You cannot change the real calendar; use create_event for mesh's own records.",
+          "Each occurrence has uid/seriesUid/date/time/name/location, and meshId+note+communities "
+          "if already materialized. You cannot change the real calendar; use create_event for mesh's "
+          "own records.",
           {"timeMin": {"type": "string", "description": "YYYY-MM-DD"},
            "timeMax": {"type": "string", "description": "YYYY-MM-DD"}}, []),
+    _tool("materialize_event",
+          "Persist a READ-ONLY calendar occurrence (from read_calendar) as a mesh event so you can "
+          "tag it and log a contribution from it. Idempotent on uid — returns the existing mesh event "
+          "if already materialized. Pass the occurrence's uid/date/name (and time/seriesUid/location "
+          "when present). Then log_contribution with the returned event id so re-runs upsert, not "
+          "duplicate.",
+          {"uid": {"type": "string"}, "date": {"type": "string", "description": "YYYY-MM-DD"},
+           "name": {"type": "string"}, "time": {"type": "string"},
+           "seriesUid": {"type": "string"}, "location": {"type": "string"}},
+          ["uid", "date", "name"]),
 ]
 
 
@@ -141,6 +153,9 @@ def _dispatch(name: str, inp: dict):
         return {"deleted": inp["id"]}
     if name == "read_calendar":
         return services.read_feed(inp.get("timeMin", ""), inp.get("timeMax", ""))
+    if name == "materialize_event":
+        row, created = services.materialize_event(inp)
+        return {"event": row, "created": created}
     raise ServiceError(400, f"unknown tool {name}")
 
 

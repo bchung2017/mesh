@@ -88,6 +88,25 @@ class AgentLoop(unittest.TestCase):
             bad = [a for a in out["actions"] if a["tool"] == "delete_community"]
             self.assertTrue(bad and bad[0]["ok"] is False)
 
+    def test_materialize_tool_creates_ical_event(self):
+        # the calendar-driven path: materialize a feed occurrence so a
+        # contribution can link to it idempotently
+        script = [
+            resp([Block(type="tool_use", name="materialize_event",
+                        input={"uid": "u::2026-02-01", "date": "2026-02-01", "name": "build night"}, id="t1")], "tool_use"),
+            resp([Block(type="text", text="materialized.")], "end_turn"),
+        ]
+        app = make_app()
+        with mock.patch.dict(os.environ, ENABLED), \
+             mock.patch.dict(sys.modules, {"anthropic": fake_anthropic(script)}), \
+             app.app_context():
+            from mesh_api.agent import run_agent
+            from mesh_api.models import Event
+            out = run_agent("materialize the build night")
+            act = [a for a in out["actions"] if a["tool"] == "materialize_event"]
+            self.assertTrue(act and act[0]["ok"])
+            self.assertIsNotNone(Event.query.filter_by(source="ical", uid="u::2026-02-01").first())
+
     def test_disabled_raises(self):
         app = make_app()
         with mock.patch.dict(os.environ, {}, clear=False), app.app_context():

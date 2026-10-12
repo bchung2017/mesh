@@ -69,6 +69,38 @@ so the Action is the scheduler; all the work still happens server-side.
 cd /app/backend && python agent_run.py "tidy up stale communities"
 ```
 
+## Calendar-driven mode (generate everything from your calendar)
+
+The agent can keep mesh purely a reflection of your Google calendar: a **one-time
+backfill** of the year so far, then a **daily incremental** run. It's idempotent —
+re-running never double-counts — because it materializes each feed occurrence
+(stable `uid`) and logs a contribution linked to it, and `(event, community)` is a
+unique upsert. Requires `MESH_ICS_URL` (the calendar feed) set on the service.
+
+**One-time backfill** — run once (manually, or via the GitHub Action's "Run
+workflow" box):
+
+> Read my calendar from 2026-01-01 to today in month-sized windows. For each
+> event that represents involvement with a community (a meetup, workshop, build
+> night, volunteer shift, organizing call), decide which community it belongs to —
+> create the community if it doesn't exist yet — then materialize the event and
+> log a contribution linked to it, choosing a mode and weight that fit. Skip
+> purely personal events (appointments, travel, errands). Summarize what you
+> created and logged.
+
+**Daily incremental** — the scheduled run's instruction (edit it in the Action, or
+rely on the default maintenance pass):
+
+> Read my calendar for the last 10 days. For each community event not already
+> logged, materialize it and log a contribution. Don't touch anything already
+> logged.
+
+Tuning knobs you own: how an event maps to a community (title/attendees), what
+counts as "a community event" vs. personal, and the mode/weight heuristics — all
+live in the instruction text, so you refine behavior by editing the prompt, not
+the code. Involvement still falls out of the logged contributions automatically
+(decayed over time), so a community you stop showing up for fades on its own.
+
 ## Turning it off
 
 Unset `MESH_AGENT_ENABLED` (or remove the key). The endpoint goes back to 503 and
