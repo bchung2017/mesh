@@ -40,7 +40,11 @@ class Job(db.Model):
 ```python
 def do_work_step(state: dict):
     """Run one step. Return (state, finished, summary). Keep it short and bounded.
-    `state` must stay JSON-serializable so the job can be saved and resumed."""
+    `state` must stay JSON-serializable so the job can be saved and resumed.
+
+    `finished` must mean the work ACTUALLY happened (G8) — not merely "this step
+    had nothing more to schedule." Returning finished=True early snaps the bar to
+    100% over a job that did nothing."""
     cursor = state.get("cursor", 0)
     total = state.get("total")
     # ... do a small chunk of work here (one item, one page, one model call) ...
@@ -51,6 +55,35 @@ def do_work_step(state: dict):
         return state, True, f"Done — processed {cursor} items."
     return state, False, None
 ```
+
+### The finished-detection trap in an AI/agent step (G8)
+
+A tool-use loop ends when the model stops asking for tools. The trap is treating
+*every* non-tool-call stop as "done" — a response truncated at the token cap
+(`stop_reason == "max_tokens"`) then ends the run right before the model acts:
+
+```python
+def agent_step(messages, actions):
+    resp = client.messages.create(model=MODEL, max_tokens=4096,   # room to plan AND act
+                                   system=SYSTEM, tools=TOOLS, messages=messages)
+    messages = messages + [{"role": "assistant", "content": serialize(resp.content)}]
+
+    if resp.stop_reason == "tool_use":
+        # ...dispatch tools, append tool_result, return finished=False...
+        return messages, actions, False, None
+    if resp.stop_reason == "max_tokens":
+        # NOT done — it ran out of room mid-thought. Nudge it to continue, don't finish.
+        messages = messages + [{"role": "user", "content": "continue"}]
+        return messages, actions, False, None
+    # a genuine end_turn → done. Use the model's final text as the summary — but only
+    # a real end_turn, never a truncated plan (that becomes a garbage "done" message).
+    summary = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text").strip()
+    return messages, actions, True, summary
+```
+
+Give the model enough `max_tokens` to reason *and* emit its tool calls in one
+step, and keep the system prompt pointed at acting-with-tools over narrating a
+long plan first, so a step doesn't burn its whole budget before doing anything.
 
 ## 3. jobs.py — start / step / cancel / active (no threads)
 
@@ -270,5 +303,7 @@ activeJob().then(j => { if (j && j.status === 'running') attach(j); }).catch(() 
 
 - POST `/job/<id>/step` with a forced error → returns `failed` **fast** (not a hang).
 - Start → bar appears, `%` advances to `done`.
+- A `done` job actually did the work (G8); an AI step truncated at `max_tokens`
+  **continues** the loop instead of finishing at 100% over nothing.
 - Reload mid-run → `/job/active` returns it, bar resumes at the right `%`.
 - Cancel → bar clears instantly, job is `cancelled` server-side.

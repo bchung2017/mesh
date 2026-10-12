@@ -108,6 +108,21 @@ controller, CSS) are in `references/templates.md`. Read it when you start.
   on next load (the feature), or retire stale/old-format jobs so they don't block
   new ones. Jobs with no resumable `state` (e.g. from an older design) → mark
   failed, don't try to resume.
+- **G8 — "finished" must mean the work actually happened, not just "this step
+  produced no more work to schedule."** The bar hitting 100% is only honest if the
+  job really did the thing. The nastiest version: the step *thinks* it's done when
+  it isn't, so the loop stops, the bar snaps to 100%, and nothing was written —
+  which looks like success. This bites hardest in **AI/agent loops**: a model
+  response that got cut off at the token cap (`stop_reason: "max_tokens"`), or an
+  intermediate "I'll now do X:" narration, is NOT a completion — but code that
+  finishes on "anything that isn't another tool call" treats it as one, ending the
+  run right before the actual work. Detect the *genuine* terminal condition (the
+  model's natural end, the cursor truly reaching the end, the goal satisfied); on
+  an inconclusive stop (truncation, "needs another turn"), **continue the loop or
+  raise the budget** — don't finish. Corollary: don't pipe the step's raw
+  intermediate text into the job summary / completion toast, or a truncated plan
+  becomes a garbage "done" message. (This one cost real debugging: a sync bar that
+  reached 100% every time and never changed a thing.)
 
 ## Verify before handoff
 
@@ -115,6 +130,9 @@ controller, CSS) are in `references/templates.md`. Read it when you start.
   **fails fast, never hangs** (test with a forced error — you want `failed`, not a
   spinner).
 - Start → the bar appears and the **percentage advances** step by step to `done`.
+- A **`done` job actually did the work** — the rows were written / the goal met —
+  not just reported done (G8). For an AI/agent step, force a truncated response
+  (`max_tokens`) and confirm the loop **continues** instead of finishing at 100%.
 - **Refresh mid-run** → the bar reappears at the right % and continues (session-
   proof).
 - **Cancel** → the bar clears instantly and the job is marked cancelled server-side.
