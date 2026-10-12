@@ -159,6 +159,20 @@ class AgentLoop(unittest.TestCase):
                 run_agent("do something")
 
 
+def _sync_start(app, instruction, kind=None):
+    """A synchronous stand-in for jobs.start used in endpoint tests — runs the
+    job inline (no thread) so assertions are deterministic."""
+    from mesh_api import db, jobs
+    from mesh_api.models import SyncJob
+    job = SyncJob(status="running", kind=kind, instruction=instruction, steps_total=40)
+    db.session.add(job)
+    db.session.commit()
+    jid = job.id
+    jobs.run_job(app, jid, instruction)
+    db.session.expire_all()   # run_job committed in its own session; re-read the DB
+    return db.session.get(SyncJob, jid)
+
+
 class AgentEndpoint(unittest.TestCase):
     def test_disabled_is_503(self):
         app = make_app()
@@ -166,41 +180,78 @@ class AgentEndpoint(unittest.TestCase):
         os.environ.pop("MESH_AGENT_ENABLED", None)
         self.assertEqual(client.post("/api/agent/run", json={}).status_code, 503)
 
-    def test_enabled_runs_and_returns_summary(self):
+    def test_enabled_starts_job_that_completes(self):
         app = make_app()
         client = app.test_client()
         with mock.patch.dict(os.environ, ENABLED), \
+             mock.patch("mesh_api.jobs.start", side_effect=_sync_start), \
              mock.patch.dict(sys.modules, {"anthropic": fake_anthropic(create_script())}):
-            r = client.post("/api/agent/run", json={"instruction": "make a community called Robotics League"})
-            self.assertEqual(r.status_code, 200)
+            r = client.post("/api/agent/run", json={"instruction": "make a community called Robotics League", "kind": "recent"})
+            self.assertEqual(r.status_code, 202)
             body = r.get_json()
-            self.assertIn("summary", body)
+            self.assertIn("id", body)
+            self.assertEqual(body["status"], "done")   # _sync_start ran it inline
             self.assertIn("RL", [c["id"] for c in client.get("/api/communities").get_json()])
+            # the job is pollable
+            self.assertEqual(client.get(f"/api/agent/jobs/{body['id']}").get_json()["status"], "done")
 
     def test_token_required_when_set(self):
         app = make_app()
         client = app.test_client()
-        with mock.patch.dict(os.environ, {**ENABLED, "MESH_AGENT_TOKEN": "s3cret"}):
-            # wrong/missing token → 403, before the model is ever called
+        with mock.patch.dict(os.environ, {**ENABLED, "MESH_AGENT_TOKEN": "s3cret"}), \
+             mock.patch("mesh_api.jobs.start", side_effect=_sync_start), \
+             mock.patch.dict(sys.modules, {"anthropic": fake_anthropic(create_script())}):
             self.assertEqual(client.post("/api/agent/run", json={}).status_code, 403)
             self.assertEqual(
                 client.post("/api/agent/run", headers={"Authorization": "Bearer nope"}, json={}).status_code, 403)
-            # correct token → runs
-            with mock.patch.dict(sys.modules, {"anthropic": fake_anthropic(create_script())}):
-                r = client.post("/api/agent/run", headers={"Authorization": "Bearer s3cret"},
-                                json={"instruction": "make a community called Robotics League"})
-                self.assertEqual(r.status_code, 200)
+            r = client.post("/api/agent/run", headers={"Authorization": "Bearer s3cret"}, json={})
+            self.assertEqual(r.status_code, 202)
 
     def test_same_origin_allowed_without_token(self):
-        # the in-app Sync button: a same-origin request is allowed even with a
-        # token set, so the frontend never has to hold the secret
         app = make_app()
         client = app.test_client()
         with mock.patch.dict(os.environ, {**ENABLED, "MESH_AGENT_TOKEN": "s3cret"}), \
+             mock.patch("mesh_api.jobs.start", side_effect=_sync_start), \
              mock.patch.dict(sys.modules, {"anthropic": fake_anthropic(create_script())}):
-            r = client.post("/api/agent/run", headers={"Origin": "http://localhost"},
-                            json={"instruction": "make a community called Robotics League"})
-            self.assertEqual(r.status_code, 200)
+            r = client.post("/api/agent/run", headers={"Origin": "http://localhost"}, json={})
+            self.assertEqual(r.status_code, 202)
+
+
+class Jobs(unittest.TestCase):
+    def test_run_job_records_progress_and_result(self):
+        app = make_app()
+        with mock.patch.dict(os.environ, ENABLED), app.app_context():
+            from mesh_api import db
+            from mesh_api.models import SyncJob
+            job = SyncJob(status="running", steps_total=40)
+            db.session.add(job); db.session.commit()
+            jid = job.id
+        with mock.patch.dict(os.environ, ENABLED), \
+             mock.patch.dict(sys.modules, {"anthropic": fake_anthropic(create_script())}):
+            from mesh_api import jobs
+            jobs.run_job(app, jid, "make a community called Robotics League")
+        with app.app_context():
+            from mesh_api import db
+            from mesh_api.models import SyncJob
+            done = db.session.get(SyncJob, jid)
+            self.assertEqual(done.status, "done")
+            self.assertTrue(done.summary)
+            self.assertGreaterEqual(done.steps_done, 1)
+
+    def test_cancel_hook_stops_the_run(self):
+        # three tool-use rounds then end; cancel before the 2nd step
+        step = lambda i: resp([Block(type="tool_use", name="list_communities", input={}, id=f"t{i}")], "tool_use")
+        script = [step(1), step(2), step(3), resp([Block(type="text", text="done")], "end_turn")]
+        app = make_app()
+        seen = {"n": 0}
+        def cancelled():
+            seen["n"] += 1
+            return seen["n"] > 1
+        with mock.patch.dict(os.environ, ENABLED), \
+             mock.patch.dict(sys.modules, {"anthropic": fake_anthropic(script)}), app.app_context():
+            from mesh_api.agent import run_agent
+            out = run_agent("list things", cancelled=cancelled)
+            self.assertTrue(out.get("cancelled"))
 
 
 if __name__ == "__main__":

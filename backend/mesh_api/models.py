@@ -58,6 +58,48 @@ class Community(db.Model):
         }
 
 
+class SyncJob(db.Model):
+    """A background agent run (the Sync button). Lives in the DB so progress
+    survives a page refresh and can be polled; the heavy work happens in a worker
+    thread that updates this row. A new table, so create_all() ships it with no
+    migration."""
+    __tablename__ = "sync_jobs"
+
+    id = db.Column(db.Integer, primary_key=True)
+    status = db.Column(db.String(16), nullable=False, default="running")  # running|done|failed|cancelled
+    kind = db.Column(db.String(16))                 # 'recent' | 'deep' (label only)
+    instruction = db.Column(db.Text)
+    steps_done = db.Column(db.Integer, nullable=False, default=0)
+    steps_total = db.Column(db.Integer, nullable=False, default=40)
+    changes = db.Column(db.Integer, nullable=False, default=0)   # tool calls that mutated
+    summary = db.Column(db.Text)
+    error = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+
+    def percent(self) -> int:
+        if self.status == "done":
+            return 100
+        if self.status in ("failed", "cancelled"):
+            # freeze the bar where it stopped
+            return min(100, round(100 * self.steps_done / max(1, self.steps_total)))
+        return min(95, round(100 * self.steps_done / max(1, self.steps_total)))  # running caps <100
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "status": self.status,
+            "kind": self.kind,
+            "percent": self.percent(),
+            "stepsDone": self.steps_done,
+            "stepsTotal": self.steps_total,
+            "changes": self.changes,
+            "summary": self.summary,
+            "error": self.error,
+            "updatedAt": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
 class CommunityEmbedding(db.Model):
     """A cached static embedding of a community's name, for conceptual dedup.
 

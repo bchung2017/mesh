@@ -176,16 +176,48 @@ def _agent_authorized() -> bool:
 
 @api.post("/agent/run")
 def agent_run():
-    """Run the autonomous agent once. Gated behind MESH_AGENT_ENABLED + a key,
-    and a shared secret (MESH_AGENT_TOKEN) when set.
-    Body: {instruction?: str}. Returns {summary, actions, steps}."""
-    from . import agent  # lazy import avoids a module-load cycle (agent → services)
+    """Start an agent sync as a background job and return it immediately (202).
+    The run continues server-side; poll /agent/jobs/<id> for progress.
+    Body: {instruction?: str, kind?: 'recent'|'deep'}."""
+    from . import agent, jobs  # lazy import avoids a module-load cycle
     if not agent.enabled():
         return jsonify({"error": "agent not enabled"}), 503
     if not _agent_authorized():
         return jsonify({"error": "unauthorized"}), 403
-    instruction = (_body().get("instruction") or "").strip() or None
-    try:
-        return jsonify(agent.run_agent(instruction))
-    except agent.AgentError as exc:
-        return jsonify({"error": str(exc)}), 502
+    data = _body()
+    instruction = (data.get("instruction") or "").strip() or None
+    kind = (data.get("kind") or "").strip() or None
+    job = jobs.start(current_app._get_current_object(), instruction, kind)
+    return jsonify(job.to_dict()), 202
+
+
+@api.get("/agent/job")
+def agent_active_job():
+    """The current running sync job, if any (so the UI can resume its progress
+    bar after a page refresh)."""
+    from . import agent, jobs
+    if not agent.enabled():
+        return jsonify({"active": None})
+    job = jobs.active()
+    return jsonify({"active": job.to_dict() if job else None})
+
+
+@api.get("/agent/jobs/<int:job_id>")
+def agent_job(job_id: int):
+    from . import jobs
+    job = jobs.get(job_id)
+    if job is None:
+        return jsonify({"error": "not found"}), 404
+    return jsonify(job.to_dict())
+
+
+@api.post("/agent/jobs/<int:job_id>/cancel")
+def agent_cancel_job(job_id: int):
+    from . import jobs
+    if not _agent_authorized():
+        return jsonify({"error": "unauthorized"}), 403
+    job = jobs.get(job_id)
+    if job is None:
+        return jsonify({"error": "not found"}), 404
+    jobs.request_cancel(job_id)
+    return jsonify(job.to_dict())

@@ -3,7 +3,8 @@ import type { FieldHandle } from '../field/blobField';
 import { byId } from '../dom';
 import {
   createCommunity, updateCommunity, deleteCommunity, getCommunityEvents,
-  getPresence, getContributions, deleteContribution, runAgent,
+  getPresence, getContributions, deleteContribution,
+  startSync, getSyncJob, getActiveSyncJob, cancelSyncJob, type SyncJob,
 } from '../api';
 import type { Contribution } from '../types';
 import { applyUpsert, applyRemove } from '../store';
@@ -355,12 +356,24 @@ export function initBlobs(show: (id: string) => void, communities: Community[], 
 
   byId('new-blob').addEventListener('click', () => openEditor(null));
 
-  // ---------------- sync: run the agent from the calendar, update the blobs ----------------
-  const SYNC_INSTRUCTION =
-    'Sync from my calendar: read the last 14 days and, for each community event not already ' +
-    'logged, materialize it and log a contribution (choosing a sensible mode and weight). Create ' +
-    'a community if an event clearly belongs to a new one. Leave anything already logged alone. ' +
-    'Reply with a one-line summary of what changed.';
+  // ---------------- sync: run the agent from the calendar as a background job ----------------
+  // explicit date windows so the model never has to guess "today" (which it gets wrong)
+  const isoDaysAgo = (n: number): string => { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString().slice(0, 10); };
+  const todayIso = (): string => new Date().toISOString().slice(0, 10);
+
+  function recentInstruction(): string {
+    return 'Sync from my calendar for the window ' + isoDaysAgo(14) + ' to ' + todayIso() + ' (inclusive). ' +
+      'For each community-relevant event in that window not already logged, materialize it and log a ' +
+      'contribution (sensible mode and weight). Skip purely personal events. Leave anything already ' +
+      'logged alone. Reply with a one-line summary of what changed.';
+  }
+  function deepInstruction(): string {
+    return 'Deep sync from my calendar for ' + todayIso().slice(0, 4) + '-01-01 to ' + todayIso() +
+      ', working in month-sized windows. For each community-relevant event not already logged, ' +
+      'materialize it and log a contribution (sensible mode and weight). If an event clearly belongs ' +
+      'to a community that doesn’t exist yet, create it — otherwise reuse the existing one. Skip purely ' +
+      'personal events. Leave anything already logged alone. Summarize what you created and logged.';
+  }
 
   function toast(msg: string): void {
     let t = document.querySelector('.mesh-toast') as (HTMLElement & { _timer?: number }) | null;
@@ -371,65 +384,102 @@ export function initBlobs(show: (id: string) => void, communities: Community[], 
     t._timer = window.setTimeout(() => t!.classList.remove('show'), 5000);
   }
 
-  function deepInstruction(): string {
-    const year = new Date().getFullYear();
-    return 'Deep sync from my calendar: read from ' + year + '-01-01 to today in month-sized ' +
-      'windows. For each community event not already logged, materialize it and log a contribution ' +
-      '(sensible mode and weight). If an event clearly belongs to a community that doesn’t exist yet, ' +
-      'create it — otherwise reuse the existing one. Skip purely personal events. Leave anything ' +
-      'already logged alone. Summarize what you created and logged.';
+  // ---- progress bar controller (session-proof: job state lives on the server) ----
+  const bar = byId('sync-bar');
+  const barFill = byId('sync-bar-fill');
+  const barLabel = byId('sync-bar-label');
+  const barCancel = byId<HTMLButtonElement>('sync-bar-cancel');
+  let activeJobId: number | null = null;
+  let pollTimer: number | null = null;
+
+  function paintJob(job: SyncJob): void {
+    bar.hidden = false;
+    barFill.style.width = job.percent + '%';
+    barFill.className = 'sync-bar-fill' + (job.status === 'failed' ? ' failed' : '');
+    const verb = job.kind === 'deep' ? 'deep syncing' : 'syncing';
+    const logged = job.changes ? ' · ' + job.changes + ' logged' : '';
+    barLabel.textContent =
+      job.status === 'running' ? verb + ' from your calendar · ' + job.percent + '%' + logged
+      : job.status === 'done' ? 'sync complete' + logged
+      : job.status === 'cancelled' ? 'sync cancelled' + logged
+      : 'sync failed';
+    barCancel.hidden = job.status !== 'running';
   }
 
+  function stopPolling(): void { if (pollTimer !== null) { window.clearInterval(pollTimer); pollTimer = null; } }
+
+  function finishJob(job: SyncJob): void {
+    stopPolling();
+    activeJobId = null;
+    try { localStorage.removeItem('mesh.syncJob'); } catch { /* ignore */ }
+    window.dispatchEvent(new Event('mesh:changed'));
+    paintJob(job);
+    toast(job.status === 'done' ? (job.summary?.trim() || 'synced — nothing to change')
+        : job.status === 'cancelled' ? 'sync cancelled'
+        : (job.error?.trim() || 'sync failed — try again'));
+    window.setTimeout(() => { bar.hidden = true; barFill.style.width = '0%'; }, 2800);
+  }
+
+  function pollJob(id: number): void {
+    stopPolling();
+    pollTimer = window.setInterval(() => {
+      getSyncJob(id)
+        .then((job) => { job.status === 'running' ? paintJob(job) : finishJob(job); })
+        .catch((err) => console.error('mesh: sync poll failed', err));   // transient — keep polling
+    }, 1500);
+  }
+
+  function attachJob(job: SyncJob): void {
+    activeJobId = job.id;
+    try { localStorage.setItem('mesh.syncJob', String(job.id)); } catch { /* ignore */ }
+    barCancel.disabled = false;
+    paintJob(job);
+    pollJob(job.id);
+  }
+
+  barCancel.addEventListener('click', () => {
+    if (activeJobId === null) return;
+    barCancel.disabled = true;
+    barLabel.textContent = 'cancelling…';
+    cancelSyncJob(activeJobId).catch((err) => console.error('mesh: cancel failed', err));
+  });
+
+  async function startSyncJob(kind: 'recent' | 'deep'): Promise<void> {
+    if (activeJobId !== null) { toast('a sync is already running'); return; }
+    const instruction = kind === 'deep' ? deepInstruction() : recentInstruction();
+    try {
+      const r = await startSync(instruction, kind);
+      if (r.ok && r.job) attachJob(r.job);
+      else if (r.status === 503) toast('sync isn’t enabled on the server yet');
+      else toast('could not start sync — try again');
+    } catch (err) {
+      console.error('mesh: could not start sync', err);
+      toast('could not start sync — check your connection');
+    }
+  }
+
+  // resume a running job after a page refresh (state is server-side)
+  getActiveSyncJob().then((job) => { if (job && job.status === 'running') attachJob(job); }).catch(() => { /* ignore */ });
+
+  // ---- sync dropdown ----
   const syncBtn = byId<HTMLButtonElement>('sync-blobs');
   const syncMenu = byId('sync-menu');
-
-  function closeSyncMenu(): void {
-    syncMenu.hidden = true;
-    syncBtn.setAttribute('aria-expanded', 'false');
-  }
+  function closeSyncMenu(): void { syncMenu.hidden = true; syncBtn.setAttribute('aria-expanded', 'false'); }
   syncBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    if (syncBtn.classList.contains('busy')) return;
     const open = !syncMenu.hidden;
     syncMenu.hidden = open;
     syncBtn.setAttribute('aria-expanded', String(!open));
   });
   syncMenu.addEventListener('click', (e) => e.stopPropagation());
   document.addEventListener('click', closeSyncMenu);
-  document.addEventListener('keydown', (e) => {
-    if ((e as KeyboardEvent).key === 'Escape') closeSyncMenu();
-  });
+  document.addEventListener('keydown', (e) => { if ((e as KeyboardEvent).key === 'Escape') closeSyncMenu(); });
   syncMenu.querySelectorAll('[data-mode]').forEach((item) =>
     item.addEventListener('click', () => {
-      const deep = (item as HTMLElement).dataset.mode === 'deep';
+      const kind: 'recent' | 'deep' = (item as HTMLElement).dataset.mode === 'deep' ? 'deep' : 'recent';
       closeSyncMenu();
-      void runSync(deep ? deepInstruction() : SYNC_INSTRUCTION, deep);
+      void startSyncJob(kind);
     }));
-
-  async function runSync(instruction: string, deep: boolean): Promise<void> {
-    if (syncBtn.classList.contains('busy')) return;
-    syncBtn.classList.add('busy'); syncBtn.disabled = true;
-    const label = syncBtn.innerHTML;
-    syncBtn.textContent = deep ? 'deep syncing…' : 'syncing…';
-    if (deep) toast('deep sync reads your whole year — this can take a minute…');
-    try {
-      const r = await runAgent(instruction);
-      if (r.ok) {
-        window.dispatchEvent(new Event('mesh:changed'));          // reconcile → blobs resize/recolor
-        toast(r.result?.summary?.trim() || 'synced — nothing to change');
-      } else if (r.status === 503) {
-        toast('sync isn’t enabled on the server yet');
-      } else {
-        toast('sync failed — try again in a moment');
-      }
-    } catch (err) {
-      console.error('mesh: sync failed', err);
-      toast('sync failed — check your connection');
-    } finally {
-      syncBtn.classList.remove('busy'); syncBtn.disabled = false;
-      syncBtn.innerHTML = label;
-    }
-  }
   modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
   document.addEventListener('keydown', (e) => {
     if ((e as KeyboardEvent).key === 'Escape' && modal.classList.contains('open')) closeModal();

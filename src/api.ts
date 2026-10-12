@@ -166,22 +166,43 @@ export async function deleteContribution(cid: number): Promise<void> {
   if (!res.ok) throw new Error(`mesh api ${res.status} deleting contribution ${cid}`);
 }
 
-/** Result of an agent sync run. */
-export interface AgentResult { summary: string; actions: unknown[]; steps: number; }
+/** A background sync job (the Sync button runs the agent as one of these). */
+export interface SyncJob {
+  id: number;
+  status: 'running' | 'done' | 'failed' | 'cancelled';
+  kind: 'recent' | 'deep' | null;
+  percent: number;
+  stepsDone: number;
+  stepsTotal: number;
+  changes: number;
+  summary: string | null;
+  error: string | null;
+  updatedAt: string | null;
+}
 
-/** Run the autonomous agent once (the in-app Sync button). Same-origin, so no
- *  token needed. Returns {ok, status, result?} — status 503 means the agent
- *  isn't enabled on the server. */
-export async function runAgent(instruction?: string): Promise<{ ok: boolean; status: number; result?: AgentResult; error?: string }> {
+/** Start an agent sync. Resolves {ok, status, job?} — status 503 means the agent
+ *  isn't enabled on the server. The run continues server-side; poll getSyncJob. */
+export async function startSync(instruction: string, kind: 'recent' | 'deep'): Promise<{ ok: boolean; status: number; job?: SyncJob }> {
   const res = await fetch(`${BASE}/agent/run`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(instruction ? { instruction } : {}),
+    body: JSON.stringify({ instruction, kind }),
   });
-  if (res.ok) return { ok: true, status: res.status, result: (await res.json()) as AgentResult };
-  let error = '';
-  try { error = (await res.json()).error; } catch { /* ignore */ }
-  return { ok: false, status: res.status, error };
+  if (res.ok) return { ok: true, status: res.status, job: (await res.json()) as SyncJob };
+  return { ok: false, status: res.status };
+}
+
+export function getSyncJob(id: number): Promise<SyncJob> {
+  return fetch(`${BASE}/agent/jobs/${id}`).then((r) => asJson<SyncJob>(r));
+}
+
+/** The current running sync job, if any (to resume the progress bar on reload). */
+export function getActiveSyncJob(): Promise<SyncJob | null> {
+  return fetch(`${BASE}/agent/job`).then((r) => asJson<{ active: SyncJob | null }>(r)).then((d) => d.active);
+}
+
+export function cancelSyncJob(id: number): Promise<SyncJob> {
+  return fetch(`${BASE}/agent/jobs/${id}/cancel`, { method: 'POST' }).then((r) => asJson<SyncJob>(r));
 }
 
 /** Ask the backend's optional LLM to classify free text into mode + weight.

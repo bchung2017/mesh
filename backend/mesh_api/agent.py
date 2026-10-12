@@ -12,6 +12,7 @@ only decides *which* operations to call, never bypasses their validation.
 """
 import json
 import os
+from datetime import date
 
 from . import services
 from .presence import MODES
@@ -210,9 +211,13 @@ DEFAULT_INSTRUCTION = (
 )
 
 
-def run_agent(instruction: str | None = None) -> dict:
+def run_agent(instruction: str | None = None, on_progress=None, cancelled=None) -> dict:
     """Run one autonomous session. Returns {summary, actions, steps}. Assumes an
-    app context (the caller — the endpoint or the runner script — provides one)."""
+    app context (the caller provides one).
+
+    on_progress(steps_done, changes) is called after each step (for a progress
+    bar); cancelled() -> bool is checked before each step so a run can be stopped.
+    """
     if not enabled():
         raise AgentError("agent not enabled (set MESH_AGENT_ENABLED=1 and ANTHROPIC_API_KEY)")
     try:
@@ -220,14 +225,24 @@ def run_agent(instruction: str | None = None) -> dict:
     except ImportError as exc:
         raise AgentError("anthropic SDK not installed") from exc
 
+    # the model doesn't know the current date, so tell it — otherwise "last 14
+    # days" / "this year" resolve to its training-era sense of "now"
+    system = SYSTEM + f"\n\nToday's date is {date.today().isoformat()}. Compute all date ranges from it."
+
     client = anthropic.Anthropic()
     messages = [{"role": "user", "content": instruction or DEFAULT_INSTRUCTION}]
     actions: list[dict] = []
 
+    def _changes() -> int:
+        return sum(1 for a in actions if a.get("ok"))
+
     for step in range(MAX_STEPS):
+        if cancelled is not None and cancelled():
+            return {"summary": f"Cancelled after {_changes()} change(s).",
+                    "actions": actions, "steps": step, "cancelled": True}
         try:
             resp = client.messages.create(
-                model=MODEL, max_tokens=MAX_TOKENS, system=SYSTEM,
+                model=MODEL, max_tokens=MAX_TOKENS, system=system,
                 tools=TOOLS, messages=messages,
             )
         except Exception as exc:
@@ -237,6 +252,8 @@ def run_agent(instruction: str | None = None) -> dict:
 
         if resp.stop_reason != "tool_use":
             summary = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text").strip()
+            if on_progress is not None:
+                on_progress(step + 1, _changes())
             return {"summary": summary, "actions": actions, "steps": step + 1}
 
         tool_results = []
@@ -253,6 +270,8 @@ def run_agent(instruction: str | None = None) -> dict:
                 tool_results.append({"type": "tool_result", "tool_use_id": block.id,
                                      "content": f"error: {exc.message}", "is_error": True})
         messages.append({"role": "user", "content": tool_results})
+        if on_progress is not None:
+            on_progress(step + 1, _changes())
 
     # reached the step cap — don't error; the work so far is committed and the
     # operations are idempotent, so return partial progress and let the user

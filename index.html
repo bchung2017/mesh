@@ -16,6 +16,16 @@
 <link rel="apple-touch-icon" href="/icons/icon-192.png">
 </head>
 <body>
+
+<!-- global sync progress bar (background agent job): session-proof, resumes on reload -->
+<div class="sync-bar" id="sync-bar" hidden>
+  <div class="sync-bar-track"><div class="sync-bar-fill" id="sync-bar-fill"></div></div>
+  <div class="sync-bar-row">
+    <span class="sync-bar-label" id="sync-bar-label">syncing…</span>
+    <button class="sync-bar-cancel" id="sync-bar-cancel" type="button">cancel</button>
+  </div>
+</div>
+
 <div class="wrap">
 
   <div>

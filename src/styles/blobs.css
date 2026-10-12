@@ -116,6 +116,28 @@
 }
 .mesh-toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 
+/* ---- global sync progress bar (background job) ---- */
+.sync-bar{
+  position:fixed;top:0;left:0;right:0;z-index:70;background:var(--white);
+  box-shadow:0 2px 14px rgba(27,42,74,0.14);padding-top:env(safe-area-inset-top);
+  animation:sync-bar-in 260ms ease;
+}
+.sync-bar[hidden]{display:none}
+@keyframes sync-bar-in{from{transform:translateY(-100%)}to{transform:translateY(0)}}
+.sync-bar-track{height:4px;background:var(--bg);overflow:hidden}
+.sync-bar-fill{height:100%;width:0;background:var(--sky);transition:width .5s ease}
+.sync-bar-fill.failed{background:var(--coral)}
+.sync-bar-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 16px}
+.sync-bar-label{font-family:var(--sans);font-size:13px;font-weight:600;color:var(--navy)}
+.sync-bar-cancel{
+  border:none;background:var(--bg);color:var(--ink-dim);cursor:pointer;font-family:var(--sans);
+  font-size:12px;font-weight:700;padding:6px 14px;border-radius:999px;transition:color .12s;flex-shrink:0;
+}
+.sync-bar-cancel:hover{color:var(--ink)}
+.sync-bar-cancel[hidden]{display:none}
+.sync-bar-cancel:disabled{opacity:0.6;cursor:default}
+@media (pointer: coarse){ .sync-bar-cancel{ min-height: 40px; } }
+
 /* ---- read-sheet actions ---- */
 .sheet-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:22px}
 .btn-ghost{
